@@ -33,25 +33,32 @@
   --popover: #ffffff;
   --popover-foreground: #0b0f1e;
 
-  /* Botón primario oscuro con texto blanco. */
-  --primary: #0b0f1e;
+  /* Botón primario azul identitario con texto blanco (acento memorable). */
+  --primary: #1d4ed8; /* azul profundo; blanco encima 6.28:1 (AA) */
   --primary-foreground: #ffffff;
+  --primary-hover: #1e40af; /* un paso más oscuro al pasar el cursor */
+  --primary-active: #1a3aa0; /* presionado */
 
   --secondary: #eef2f8;
-  --secondary-foreground: #0b0f1e;
+  --secondary-foreground: #1f2a44; /* 10.6:1 sobre secondary */
+  --secondary-hover: #e3e9f3; /* hover sutil del botón secundario */
+  --secondary-active: #d7e0ee;
 
   --muted: #eef2f8;
   --muted-foreground: #54607a; /* AA sobre #ffffff (6.30:1) y #f6f8fb (5.93:1) */
 
   --accent: #eef2f8; /* superficie de hover/activo (claro) */
   --accent-foreground: #0b0f1e;
+  --accent-hover: #e3e9f3; /* hover de ghost/outline (más visible que accent) */
 
   --destructive: #dc2626; /* FONDO de botón; texto blanco 4.83:1 (AA) */
   --destructive-foreground: #ffffff;
+  --destructive-hover: #c21f1f;
+  --destructive-active: #a91b1b;
   --destructive-text: #dc2626; /* TEXTO rojo sobre blanco: 4.83:1 (en claro coinciden) */
 
   --border: #7e8ca3; /* borde de control VISIBLE: 3.41:1 sobre blanco, 3.20:1 sobre bg */
-  --border-soft: #e7ecf3; /* borde decorativo interno (sin requisito 3:1) */
+  --border-soft: #e4e9f1; /* borde decorativo interno (sin requisito 3:1) */
 
   --input: #ffffff;
   --input-elevated: #ffffff; /* en claro el input ya es blanco; el borde distingue en diálogo */
@@ -69,7 +76,7 @@
   /* Sidebar (claro). */
   --sidebar: #ffffff;
   --sidebar-foreground: #0b0f1e;
-  --sidebar-primary: #0b0f1e;
+  --sidebar-primary: #1d4ed8; /* ítem activo AZUL, cohesión con el acento */
   --sidebar-primary-foreground: #ffffff;
   --sidebar-accent: #eef2f8;
   --sidebar-accent-foreground: #0b0f1e;
@@ -98,20 +105,27 @@
   --popover: #1a2236; /* superficie elevada (aclarado desde #161d31) */
   --popover-foreground: #f8fafc;
 
-  --primary: #f1f5f9; /* botón primario claro con texto oscuro */
-  --primary-foreground: #0b0f1e;
+  --primary: #2563eb; /* botón primario AZUL identitario; blanco encima 5.17:1 (AA) */
+  --primary-foreground: #ffffff;
+  --primary-hover: #357ae8; /* más claro al pasar el cursor (4.12:1, AA) */
+  --primary-active: #1d4ed8; /* presionado (6.70:1) */
 
   --secondary: #1b2338;
   --secondary-foreground: #e2e8f0;
+  --secondary-hover: #232d47;
+  --secondary-active: #2b3758;
 
   --muted: #1b2338;
   --muted-foreground: #aeb9cd; /* subido para AA sobre card/background/input */
 
   --accent: #222c45; /* superficie de hover/activo */
   --accent-foreground: #f8fafc;
+  --accent-hover: #2a3654; /* hover de ghost/outline un paso más claro */
 
   --destructive: #dc2626; /* FONDO de botón: texto blanco 4.83:1 (AA) */
   --destructive-foreground: #ffffff;
+  --destructive-hover: #e4453f;
+  --destructive-active: #b91c1c;
   --destructive-text: #f87171; /* TEXTO rojo: 6.39:1 sobre card, 7.15:1 sobre bg */
 
   --border: #627294; /* borde de control VISIBLE: 3.66:1 sobre card */
@@ -132,8 +146,8 @@
   /* Sidebar (oscuro, alineado a la nueva escala). */
   --sidebar: #0b1120;
   --sidebar-foreground: #e2e8f0;
-  --sidebar-primary: #f1f5f9;
-  --sidebar-primary-foreground: #0b0f1e;
+  --sidebar-primary: #2563eb; /* ítem activo AZUL, cohesión con el acento */
+  --sidebar-primary-foreground: #ffffff;
   --sidebar-accent: #222c45;
   --sidebar-accent-foreground: #f8fafc;
   --sidebar-border: #627294;
@@ -156,15 +170,23 @@
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-active: var(--primary-active);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary-hover: var(--secondary-hover);
+  --color-secondary-active: var(--secondary-active);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
+  --color-accent-hover: var(--accent-hover);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive-hover: var(--destructive-hover);
+  --color-destructive-active: var(--destructive-active);
   --color-destructive-text: var(--destructive-text);
+  --color-border-soft: var(--border-soft);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
