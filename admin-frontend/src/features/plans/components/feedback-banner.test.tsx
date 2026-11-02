@@ -28,6 +28,13 @@ describe("Plans FeedbackBanner", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("No se pudo eliminar");
   });
 
+  it("aplica el borde izquierdo rojo grueso en la variante error", () => {
+    render(<FeedbackBanner tone="error" message="No se pudo eliminar" />);
+
+    const banner = screen.getByRole("alert");
+    expect(banner).toHaveClass("border-l-4", "border-l-destructive");
+  });
+
   it("invoca onDismiss al pulsar el botón de descarte", async () => {
     const user = userEvent.setup({ delay: null });
     const onDismiss = vi.fn();

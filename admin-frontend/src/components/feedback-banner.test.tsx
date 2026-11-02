@@ -29,6 +29,13 @@ describe("Customers FeedbackBanner", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Email ya registrado");
   });
 
+  it("aplica el borde izquierdo rojo grueso en la variante error", () => {
+    render(<FeedbackBanner tone="error" message="Email ya registrado" />);
+
+    const banner = screen.getByRole("alert");
+    expect(banner).toHaveClass("border-l-4", "border-l-destructive");
+  });
+
   it("renderiza el mensaje de advertencia (tone='warning')", () => {
     render(
       <FeedbackBanner tone="warning" message="No se pudieron cargar los módulos" />,

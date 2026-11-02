@@ -25,7 +25,7 @@ import {
   type ResolverOptions,
 } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Loader2 } from "lucide-react";
+import { AlertCircle, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -570,7 +570,12 @@ function Field({
       <Label htmlFor={htmlFor}>{label}</Label>
       {children}
       {error ? (
-        <p className="text-sm text-destructive" role="alert">
+        <p
+          id={`${htmlFor}-error`}
+          role="alert"
+          className="mt-1.5 flex items-center gap-1.5 text-xs text-destructive-text"
+        >
+          <AlertCircle className="size-3.5 shrink-0" aria-hidden="true" />
           {error}
         </p>
       ) : null}

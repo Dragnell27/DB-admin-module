@@ -12,7 +12,7 @@
  * controlado, cierre con Escape/telón).
  */
 import * as React from "react";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { AlertCircle, AlertTriangle, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -381,7 +381,10 @@ export function ActionFormDialog({
                       />
                     )}
                     {errors[cf.field] ? (
-                      <p className="text-xs text-destructive-text">{errors[cf.field]}</p>
+                      <p className="mt-1.5 flex items-center gap-1.5 text-xs text-destructive-text">
+                        <AlertCircle className="size-3.5 shrink-0" aria-hidden="true" />
+                        {errors[cf.field]}
+                      </p>
                     ) : null}
                   </div>
                 ))
@@ -453,7 +456,10 @@ export function ActionFormDialog({
                     />
                   )}
                   {errors[f.name] ? (
-                    <p className="text-xs text-destructive-text">{errors[f.name]}</p>
+                    <p className="mt-1.5 flex items-center gap-1.5 text-xs text-destructive-text">
+                      <AlertCircle className="size-3.5 shrink-0" aria-hidden="true" />
+                      {errors[f.name]}
+                    </p>
                   ) : null}
                 </div>
               ))
