@@ -303,18 +303,6 @@ export function OriginSection({
           <Label htmlFor="w_source">Tipo de origen</Label>
           <Input id="w_source" value="PostgreSQL" readOnly disabled />
         </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="w_scope">Ámbito de país</Label>
-          <select
-            id="w_scope"
-            className={inputClass}
-            value={state.countryScope}
-            onChange={(e) => patch({ countryScope: e.target.value as WizardState["countryScope"] })}
-          >
-            <option value="none">Sin país (único)</option>
-            <option value="multi">Por país</option>
-          </select>
-        </div>
       </div>
 
       <div className="space-y-1.5">

@@ -391,8 +391,9 @@ describe("fromCopyableDefinition (copiar configuración al crear)", () => {
     const edit = fromDefinition(sourceDef);
 
     // Todo lo que se debe copiar coincide con el estado de edición.
+    // (countryScope ya no forma parte del estado del asistente: se eliminó el
+    // control; el DTO conserva el campo y al guardar se fija a 'none'.)
     expect(copy.sourceType).toBe(edit.sourceType);
-    expect(copy.countryScope).toBe(edit.countryScope);
     expect(copy.menuPath).toBe(edit.menuPath);
     expect(copy.pgTable).toBe(edit.pgTable);
     expect(copy.pgWhitelist).toEqual(edit.pgWhitelist);

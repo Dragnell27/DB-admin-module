@@ -13,7 +13,6 @@ import { z } from "zod";
 import type {
   ActionKind,
   ColumnValueSource,
-  CountryScope,
   DynamicSource,
   FieldSpec,
   FieldType,
@@ -587,7 +586,6 @@ export interface WizardState {
   slug: string;
   name: string;
   sourceType: SourceType;
-  countryScope: CountryScope;
   /** Ruta jerárquica libre del módulo en el menú (organizativa, Req. 6). */
   menuPath: string;
   /** Plantilla de conexión seleccionada (obligatoria, Req. 3.1). */
@@ -613,7 +611,6 @@ export function emptyWizardState(): WizardState {
     slug: "",
     name: "",
     sourceType: "postgres",
-    countryScope: "none",
     menuPath: "",
     connectionTemplateId: "",
     variableValues: {},
@@ -904,7 +901,11 @@ export function toDefinitionInput(state: WizardState): ModuleDefinitionInput {
     slug: state.slug,
     name: state.name,
     sourceType: state.sourceType,
-    countryScope: state.countryScope,
+    // El ámbito de país se eliminó del asistente: todos los módulos de BD se
+    // comportan como país '*' (acceso independiente de país). Se FIJA siempre a
+    // 'none' en el DTO; el backend sigue aceptando el campo y su lógica de
+    // permisos (country_scope) permanece intacta (autorización viva).
+    countryScope: "none",
     menuPath: state.menuPath,
     fetchMapping,
     displayMapping,
@@ -1045,7 +1046,9 @@ export function fromDefinition(def: ModuleDefinitionInput): WizardState {
     // origen "api" ya no pueden editarse (el backend las rechaza al guardar),
     // por lo que el asistente siempre trabaja en modo postgres.
     sourceType: "postgres",
-    countryScope: def.countryScope,
+    // countryScope ya no forma parte del estado del asistente (se eliminó el
+    // control). El backend conserva el valor del módulo; al reguardar,
+    // toDefinitionInput vuelve a fijarlo en 'none'.
     menuPath: def.menuPath ?? "",
     connectionTemplateId: def.dataSource?.connectionTemplateId ?? "",
     // Los valores variables llegan vacíos (el backend nunca los devuelve).
@@ -1133,8 +1136,8 @@ export function fromDefinition(def: ModuleDefinitionInput): WizardState {
  * Convierte la Definición de un módulo EXISTENTE al estado del asistente para
  * COPIAR su configuración al crear uno nuevo (module-builder). Reutiliza
  * `fromDefinition` (que ya copia campos/acciones/mapeos/listParams/condiciones/
- * ámbito de país/menuPath y nunca trae secretos) y luego VACÍA lo que debe ser
- * único o quedar sin definir en el módulo nuevo:
+ * menuPath y nunca trae secretos) y luego VACÍA lo que debe ser único o quedar
+ * sin definir en el módulo nuevo:
  *   - slug y name: deben ser nuevos y únicos → se exigen al usuario.
  *   - connectionTemplateId y variableValues: la CONEXIÓN no se copia (ni la
  *     plantilla ni los valores variables); el usuario elige la conexión del
