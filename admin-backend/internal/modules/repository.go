@@ -482,6 +482,23 @@ func insertActions(tx *gorm.DB, moduleID string, actions []Action) error {
 	return nil
 }
 
+// whitelistSetOf devuelve el conjunto (set) de columnas permitidas de `table`
+// en la lista blanca `wl`, y un bool que indica si la tabla tiene entrada. Es la
+// extracción a función de paquete del helper que antes vivía como closure dentro
+// de validateMultiTable; su comportamiento es idéntico (tabla sin entrada ⇒
+// (nil, false)).
+func whitelistSetOf(wl map[string][]string, table string) (map[string]struct{}, bool) {
+	cols, ok := wl[table]
+	if !ok {
+		return nil, false
+	}
+	set := make(map[string]struct{}, len(cols))
+	for _, c := range cols {
+		set[c] = struct{}{}
+	}
+	return set, true
+}
+
 // validateDefinition valida las invariantes de una definición antes de persistir.
 func validateDefinition(def *Definition) error {
 	if !auth.IsValidSlug(def.Slug) {
@@ -509,6 +526,46 @@ func validateDefinition(def *Definition) error {
 	// hoy. Todos los rechazos envuelven ErrMultiTableValidation (→ E422).
 	if err := validateMultiTable(def); err != nil {
 		return err
+	}
+	// Validación INCONDICIONAL de la fuente de valor por columna (cierra el hueco
+	// N=1: validateMultiTable es no-op para módulos de una sola tabla, así que la
+	// whitelist de los catálogos DINÁMICOS de columna debe comprobarse también
+	// aquí). Cada fuente dynamic debe apuntar a una tabla con entrada en la lista
+	// blanca y a columnas id/label no vacías y whitelisteadas. Todo rechazo
+	// envuelve ErrMultiTableValidation (→ E422).
+	if err := validateColumnValueSources(def); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateColumnValueSources recorre TODAS las columnas resueltas (principal
+// incluida) y, por cada una con una fuente de valor DINÁMICA, valida contra la
+// lista blanca del módulo que la tabla del catálogo existe y que sus columnas id
+// y etiqueta no son vacías y están whitelisteadas. Es independiente de que el
+// módulo sea multi-tabla o N=1. Los fallos envuelven ErrMultiTableValidation.
+func validateColumnValueSources(def *Definition) error {
+	whitelist := def.DataSource.PGWhitelist
+	principal := MultiTableFromFetchMapping(def.FetchMapping).PrincipalTable
+	cols := ColumnsFromDisplayMappingWithPrincipal(def.DisplayMapping, principal)
+	for _, c := range cols {
+		vs := c.ValueSource
+		if vs == nil || vs.Kind != "dynamic" || vs.DynamicSource == nil {
+			continue
+		}
+		ds := vs.DynamicSource
+		set, ok := whitelistSetOf(whitelist, ds.Table)
+		if !ok {
+			return fmt.Errorf("%w: la tabla de catálogo %q de la columna %q no tiene entrada en la lista blanca", ErrMultiTableValidation, ds.Table, c.Field)
+		}
+		if ds.IDColumn == "" || ds.LabelColumn == "" {
+			return fmt.Errorf("%w: la fuente dinámica de la columna %q debe declarar columna de id y de etiqueta", ErrMultiTableValidation, c.Field)
+		}
+		for _, col := range []string{ds.IDColumn, ds.LabelColumn} {
+			if _, ok := set[col]; !ok {
+				return fmt.Errorf("%w: la columna %q.%q del catálogo de la columna %q no está en la lista blanca", ErrMultiTableValidation, ds.Table, col, c.Field)
+			}
+		}
 	}
 	return nil
 }
@@ -542,15 +599,7 @@ func validateMultiTable(def *Definition) error {
 
 	// (d) Lista blanca: cada tabla referenciada debe tener entrada en PGWhitelist.
 	whitelistSet := func(table string) (map[string]struct{}, bool) {
-		cols, ok := whitelist[table]
-		if !ok {
-			return nil, false
-		}
-		set := make(map[string]struct{}, len(cols))
-		for _, c := range cols {
-			set[c] = struct{}{}
-		}
-		return set, true
+		return whitelistSetOf(whitelist, table)
 	}
 	for _, t := range spec.Tables() {
 		if _, ok := whitelist[t]; !ok {

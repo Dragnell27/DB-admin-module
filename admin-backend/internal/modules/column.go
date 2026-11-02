@@ -57,6 +57,28 @@ type DisplayColumn struct {
 	// Ausente ⇒ la tabla principal (compatibilidad N=1). Junto con Field forma la
 	// identidad (sourceTable, field) que desambigua columnas homónimas.
 	SourceTable string `json:"sourceTable,omitempty"`
+	// ValueSource es la fuente de valor OPCIONAL de la columna (estática o
+	// dinámica). Ausente ⇒ columna sin fuente (comportamiento histórico); el
+	// omitempty preserva la retrocompatibilidad byte a byte al re-serializar.
+	ValueSource *ColumnValueSource `json:"valueSource,omitempty"`
+}
+
+// ColumnValueSource describe la FUENTE DE VALOR de una columna: cómo traducir el
+// valor crudo de la celda a una etiqueta legible y, en crear/editar, qué
+// opciones ofrecer. Es independiente de la fuente de opciones de una ACCIÓN
+// (FieldSpec); cuando ambas existen manda la columna. Reutiliza SelectOption
+// (opciones estáticas etiqueta/valor) y DynamicSource (catálogo de otra tabla de
+// la misma conexión). Se serializa dentro de displayMapping.columns y es
+// OPCIONAL (omitempty ⇒ retrocompatibilidad byte a byte con definiciones
+// antiguas).
+//
+//   - Kind == "static": las opciones viven en Options (lista fija).
+//   - Kind == "dynamic": las opciones se resuelven en tiempo de ejecución desde
+//     DynamicSource (validado contra la lista blanca al guardar).
+type ColumnValueSource struct {
+	Kind          string         `json:"kind"`
+	Options       []SelectOption `json:"options,omitempty"`
+	DynamicSource *DynamicSource `json:"dynamicSource,omitempty"`
 }
 
 // ResolvedColumn es una DisplayColumn con las banderas YA normalizadas a bool
@@ -74,6 +96,9 @@ type ResolvedColumn struct {
 	// definición no la declara). En N=1 es CONSTANTE (la principal) en todas las
 	// columnas.
 	SourceTable string
+	// ValueSource es la fuente de valor de la columna YA normalizada
+	// (normalizeColumnValueSource): nil si la columna no declara fuente válida.
+	ValueSource *ColumnValueSource
 }
 
 // ColumnsFromDisplayMapping extrae, en orden estable por Order (y Field a
@@ -145,6 +170,7 @@ func ColumnsFromDisplayMappingWithPrincipal(dm map[string]any, principal string)
 			IsPrimaryKey: c.IsPrimaryKey,
 			Editable:     editable,
 			SourceTable:  sourceTable,
+			ValueSource:  normalizeColumnValueSource(c.ValueSource),
 		})
 	}
 
@@ -158,6 +184,31 @@ func ColumnsFromDisplayMappingWithPrincipal(dm map[string]any, principal string)
 		return out[i].SourceTable < out[j].SourceTable
 	})
 	return out
+}
+
+// normalizeColumnValueSource normaliza la fuente de valor de una columna en la
+// capa de LECTURA, de forma TOLERANTE (nunca falla; la validación de guardado es
+// quien rechaza una fuente dinámica fuera de la lista blanca):
+//
+//   - nil, o Kind fuera de {"static","dynamic"} ⇒ nil (columna sin fuente).
+//   - Kind == "static" con Options vacío ⇒ nil (estática sin opciones no aporta).
+//   - Kind == "dynamic" ⇒ devuelve el puntero TAL CUAL (en lectura es tolerante;
+//     el filtro contra la lista blanca ocurre al guardar, no aquí).
+func normalizeColumnValueSource(vs *ColumnValueSource) *ColumnValueSource {
+	if vs == nil {
+		return nil
+	}
+	switch vs.Kind {
+	case "static":
+		if len(vs.Options) == 0 {
+			return nil
+		}
+		return vs
+	case "dynamic":
+		return vs
+	default:
+		return nil
+	}
 }
 
 // PrimaryKeyColumns devuelve, en orden estable, los Field de las columnas con
