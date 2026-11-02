@@ -101,7 +101,7 @@ export function ToastViewport() {
   const polite = toasts.filter((t) => t.tone !== "error");
 
   return (
-    <div className="pointer-events-none fixed top-4 right-4 z-50 flex w-full max-w-sm flex-col gap-2">
+    <div className="pointer-events-none fixed top-20 right-4 z-50 flex w-full max-w-sm flex-col gap-2">
       <div role="alert" aria-live="assertive" className="flex flex-col gap-2">
         {[...errors].reverse().map((t) => (
           <ToastItem key={t.id} toast={t} onDismiss={dismiss} />
