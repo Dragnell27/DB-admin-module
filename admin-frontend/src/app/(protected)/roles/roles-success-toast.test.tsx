@@ -9,22 +9,29 @@
  * efecto se ejecuta dos veces (antes de que `router.replace` quite el flag) se
  * disparan DOS toasts.
  *
- * Por qué es DETERMINISTA (y no depende del azar del doble-render de
- * StrictMode): el test FUERZA dos ejecuciones del efecto de forma controlada —
- * monta el componente, lo desmonta y lo vuelve a montar con el MISMO flag de
- * query (remontaje explícito), de modo que el efecto corre dos veces sí o sí.
- * Como el guard vive en un `useRef` que se reinicia en cada montaje, el remonte
- * por sí solo NO probaría el guard; por eso, además, se envuelve cada montaje en
- * `<React.StrictMode>`, que en test ejecuta el efecto dos veces DENTRO del mismo
- * montaje (donde el `useRef` SÍ persiste). Así el guard se ejercita de verdad:
+ * Por qué es DETERMINISTA (y NO depende del doble-efecto de React Strict Mode,
+ * que solo ocurre en las builds de desarrollo de React): el test FUERZA dos
+ * ejecuciones del efecto de forma controlada SIN StrictMode. El guard vive en un
+ * `useRef`, que persiste mientras NO se remonte el componente; por eso las dos
+ * ejecuciones tienen que ocurrir en la MISMA instancia montada (un remonte
+ * reiniciaría el ref y no probaría el guard).
  *
- *  - CON guard  → cada montaje StrictMode emite UNA sola vez (ref persiste entre
- *    las dos pasadas del efecto del mismo montaje).
- *  - SIN guard  → cada montaje StrictMode emitiría DOS veces.
+ * Mecanismo: el mock de `useRouter` devuelve un objeto NUEVO en cada llamada
+ * (`{ replace: replaceMock }` recién creado). Como el efecto del componente
+ * declara `router` en sus dependencias (`[created, updated, router]`), al hacer
+ * `rerender(...)` sobre la MISMA instancia el `router` cambia de referencia, de
+ * modo que React vuelve a ejecutar el efecto. El `useRef` persiste entre esos dos
+ * renders. Así el efecto corre dos veces SÍ o SÍ, por control explícito del
+ * test, no por el modo dev de React:
  *
- * Se asevera EXACTAMENTE UNA emisión por montaje. Si se quita el guard `useRef`
- * de `RolesSuccessToast`, el conteo pasa a 2 y el test FALLA, demostrando la
- * regresión.
+ *  - CON guard  → la 2ª ejecución ve `emitted.current === true` y NO emite: UNA
+ *    sola llamada a `toast.success`.
+ *  - SIN guard  → la 2ª ejecución emite de nuevo: DOS llamadas → el test FALLA.
+ *
+ * Se asevera EXACTAMENTE UNA emisión. Si se quita el guard `useRef` de
+ * `RolesSuccessToast`, el conteo pasa a 2 y el test FALLA, demostrando la
+ * regresión — y lo hace igual en build de producción, porque el segundo efecto
+ * lo fuerza el cambio de dependencia del `rerender`, no StrictMode.
  *
  * El espía se pone sobre el MISMO objeto `toast` que importa el componente
  * (`@/lib/use-toast`), que reexporta la misma referencia de `@/lib/toast-store`.
@@ -36,10 +43,12 @@ import { render, cleanup } from "@testing-library/react";
 import { toast } from "@/lib/use-toast";
 import { RolesSuccessToast } from "./roles-success-toast";
 
-// Mock de next/navigation dentro del mismo factory: `useRouter().replace`
-// espiado y `useSearchParams()` devolviendo el flag de query controlado por la
-// variable `searchParams` (new URLSearchParams tiene `.get(...)`, lo único que
-// consume el componente).
+// Mock de next/navigation dentro del mismo factory. `useRouter()` devuelve un
+// objeto NUEVO en cada invocación para que la dependencia `router` del efecto
+// cambie entre renders y fuerce una segunda ejecución del efecto en la misma
+// instancia (ver cabecera). `useSearchParams()` devuelve el flag de query
+// controlado por `searchParams` (new URLSearchParams tiene `.get(...)`, lo único
+// que consume el componente).
 const replaceMock = vi.fn();
 let searchParams = new URLSearchParams("created=1");
 vi.mock("next/navigation", () => ({
@@ -60,11 +69,12 @@ describe("RolesSuccessToast — idempotencia del toast de éxito", () => {
       .spyOn(toast, "success")
       .mockImplementation(() => "");
 
-    render(
-      <React.StrictMode>
-        <RolesSuccessToast />
-      </React.StrictMode>,
-    );
+    // Primer render: el efecto corre una vez (emisión esperada).
+    const { rerender } = render(<RolesSuccessToast />);
+    // Segundo render de la MISMA instancia: `useRouter()` devuelve un objeto
+    // nuevo, cambia la dependencia `router` y el efecto vuelve a ejecutarse. El
+    // `useRef` del guard persiste, así que NO debe emitir de nuevo.
+    rerender(<RolesSuccessToast />);
 
     expect(successSpy).toHaveBeenCalledTimes(1);
     expect(successSpy).toHaveBeenCalledWith("Rol creado correctamente.");
@@ -76,11 +86,8 @@ describe("RolesSuccessToast — idempotencia del toast de éxito", () => {
       .spyOn(toast, "success")
       .mockImplementation(() => "");
 
-    render(
-      <React.StrictMode>
-        <RolesSuccessToast />
-      </React.StrictMode>,
-    );
+    const { rerender } = render(<RolesSuccessToast />);
+    rerender(<RolesSuccessToast />);
 
     expect(successSpy).toHaveBeenCalledTimes(1);
     expect(successSpy).toHaveBeenCalledWith("Rol actualizado correctamente.");
