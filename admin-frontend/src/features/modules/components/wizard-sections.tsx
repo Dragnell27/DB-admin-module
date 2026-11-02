@@ -24,6 +24,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { CollapsibleRow } from "@/components/ui/collapsible-row";
+import { Pill } from "@/components/ui/pill";
 import { FeedbackBanner } from "@/components/feedback-banner";
 import type { ApiError } from "@/lib/api-client";
 import { useModuleDef, useVisibleModules } from "@/features/modules/hooks";
@@ -1131,18 +1132,14 @@ function ColumnTableGroup({
           aria-hidden="true"
         />
         <span className="font-mono text-sm font-medium text-foreground">{table}</span>
-        <span className="rounded-full border border-border-soft bg-secondary px-2 py-0.5 text-xs text-secondary-foreground">
+        <Pill variant={isPrincipal ? "principal" : "foranea"}>
           {isPrincipal ? "Principal" : "Foránea"}
-        </span>
+        </Pill>
         <span className="ml-auto flex items-center gap-2">
-          <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+          <Pill variant="count">
             {items.length} {items.length === 1 ? "columna" : "columnas"}
-          </span>
-          {pkCount > 0 ? (
-            <span className="rounded-full px-2 py-0.5 text-xs font-medium text-[var(--chart-3)]">
-              {pkCount} PK
-            </span>
-          ) : null}
+          </Pill>
+          {pkCount > 0 ? <Pill variant="pk">{pkCount} PK</Pill> : null}
         </span>
       </button>
       {expanded ? (

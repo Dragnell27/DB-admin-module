@@ -62,6 +62,10 @@
   --border: #7e8ca3; /* borde de control VISIBLE: 3.41:1 sobre blanco, 3.20:1 sobre bg */
   --border-soft: #e4e9f1; /* borde decorativo interno (sin requisito 3:1) */
 
+  /* Superficies suaves de los pills de resumen (FEAT-001). */
+  --pill-principal-bg: #eef4fe; /* azul muy tenue para el pill «Principal» */
+  --pill-pk-bg: #f1ebfe; /* púrpura muy tenue para el pill «PK» */
+
   --input: #ffffff;
   --input-elevated: #ffffff; /* en claro el input ya es blanco; el borde distingue en diálogo */
   --input-hover: #f3f6fb;
@@ -139,6 +143,10 @@
   --border: #627294; /* borde de control VISIBLE: 3.66:1 sobre card */
   --border-soft: #273150; /* borde decorativo interno (sin requisito 3:1) */
 
+  /* Superficies suaves de los pills de resumen (FEAT-001). */
+  --pill-principal-bg: #1d2a44; /* azul profundo tenue para el pill «Principal» */
+  --pill-pk-bg: #2a2347; /* púrpura profundo tenue para el pill «PK» */
+
   --input: #1e2740; /* MÁS CLARO que --card (#121829): el campo "despega" */
   --input-elevated: #273253; /* input dentro de popover/diálogo: un paso más claro */
   --input-hover: #243050;
@@ -200,6 +208,8 @@
   --color-ok-text: var(--ok-text);
   --color-warn-text: var(--warn-text);
   --color-border-soft: var(--border-soft);
+  --color-pill-principal-bg: var(--pill-principal-bg);
+  --color-pill-pk-bg: var(--pill-pk-bg);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-input-border: var(--input-border);
