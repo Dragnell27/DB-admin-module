@@ -33,6 +33,7 @@ import type { ListParams } from "@/types/api";
 import {
   useModuleAction,
   useModuleActionList,
+  useModuleColumnOptions,
   useModuleDef,
   useModuleFieldOptions,
   useModuleList,
@@ -91,6 +92,11 @@ function columnsFromMapping(def: ModuleDefinition | undefined): DisplayColumn[] 
         isPrimaryKey,
         editable: isPrimaryKey ? false : c.editable === undefined ? true : Boolean(c.editable),
         sourceTable: typeof c.sourceTable === "string" ? c.sourceTable : undefined,
+        // Fuente de valores de la columna (FEAT-001/003): se conserva tal cual
+        // para que la precedencia columna > acción pueda leerla al resolver
+        // id→etiqueta en el grid y poblar el desplegable en crear/editar.
+        // Ausente ⇒ undefined ⇒ comportamiento histórico idéntico.
+        valueSource: c.valueSource,
       } satisfies DisplayColumn;
     });
   cols.sort((a, b) => a.order - b.order);
@@ -255,6 +261,110 @@ export function dynamicColumnBindings(
 }
 
 /**
+ * Origen resuelto de los valores de UNA columna visible del grid, aplicando la
+ * precedencia columna > campo de acción (FEAT-004):
+ *   - "column-static": la columna trae una lista ESTÁTICA (valueSource.kind ===
+ *     "static" con opciones); el mapa id→etiqueta se arma en memoria SIN fetch.
+ *   - "column-dynamic": la columna trae una lista DINÁMICA (valueSource.kind ===
+ *     "dynamic"); se resuelve con UN fetch por columna (useModuleColumnOptions).
+ *   - "action-dynamic": la columna NO declara fuente propia pero empareja con un
+ *     FieldSpec dinámico de alguna acción (comportamiento histórico de
+ *     dynamicColumnBindings); se resuelve con useModuleFieldOptions.
+ */
+export type ColumnSourceOrigin =
+  | { readonly kind: "column-static"; readonly options: ReadonlyArray<SelectOption> }
+  | { readonly kind: "column-dynamic" }
+  | { readonly kind: "action-dynamic"; readonly actionKey: string };
+
+/**
+ * Binding de una columna visible del grid a su fuente de valores resuelta. La
+ * clave `renderKey` es con la que la celda viaja en la fila (alias
+ * `<tabla>__<col>` en multi-tabla, nombre pelado en N=1), de modo que columnas
+ * HOMÓNIMAS de tablas distintas no colisionan. `field`/`sourceTable` identifican
+ * la columna para el endpoint de opciones por columna.
+ */
+export interface ColumnSourceBinding {
+  readonly renderKey: string;
+  readonly field: string;
+  readonly sourceTable?: string;
+  readonly origin: ColumnSourceOrigin;
+}
+
+/**
+ * Deriva, por cada columna VISIBLE, el binding de su fuente de valores aplicando
+ * la precedencia columna > campo de acción (FEAT-004). Generaliza
+ * `dynamicColumnBindings`: ahora la fuente puede venir de la propia columna
+ * (`valueSource`) y manda sobre el FieldSpec dinámico de una acción. Reglas por
+ * columna:
+ *   - valueSource.kind === "static" con opciones ⇒ "column-static" (mapa en
+ *     memoria, sin fetch).
+ *   - valueSource.kind === "dynamic" ⇒ "column-dynamic" (1 fetch por columna).
+ *   - si no hay valueSource utilizable y existe un FieldSpec dinámico emparejable
+ *     por (field, sourceTable) ⇒ "action-dynamic" (lógica histórica).
+ *   - si no ⇒ no se emite binding (la columna se renderiza igual que hoy).
+ * Dedupe por `renderKey`: como máximo UN binding por columna.
+ */
+export function columnValueSourceBindings(
+  def: ModuleDefinition | undefined,
+  displayColumns: DisplayColumn[],
+  multiTable: boolean,
+  principal: string,
+): ColumnSourceBinding[] {
+  if (!def) {
+    return [];
+  }
+  // Fallback de acción (precedencia más baja): reutiliza la lógica histórica de
+  // emparejamiento columna↔FieldSpec dinámico, keyeada por renderKey.
+  const actionBindings = new Map(
+    dynamicColumnBindings(def, displayColumns, multiTable, principal).map(
+      (b) => [b.renderKey, b] as const,
+    ),
+  );
+
+  const byRenderKey = new Map<string, ColumnSourceBinding>();
+  for (const col of displayColumns) {
+    const renderKey = renderKeyFor(col, multiTable, principal);
+    if (byRenderKey.has(renderKey)) {
+      continue; // dedupe: una columna no se resuelve dos veces.
+    }
+    const vs = col.valueSource;
+    // Precedencia 1: lista ESTÁTICA de la columna (sin fetch).
+    if (vs && vs.kind === "static" && vs.options && vs.options.length > 0) {
+      byRenderKey.set(renderKey, {
+        renderKey,
+        field: col.field,
+        sourceTable: col.sourceTable,
+        origin: { kind: "column-static", options: vs.options },
+      });
+      continue;
+    }
+    // Precedencia 2: lista DINÁMICA de la columna (1 fetch por columna).
+    if (vs && vs.kind === "dynamic" && vs.dynamicSource != null) {
+      byRenderKey.set(renderKey, {
+        renderKey,
+        field: col.field,
+        sourceTable: col.sourceTable,
+        origin: { kind: "column-dynamic" },
+      });
+      continue;
+    }
+    // Precedencia 3: FieldSpec dinámico de una acción (comportamiento histórico).
+    const ab = actionBindings.get(renderKey);
+    if (ab) {
+      byRenderKey.set(renderKey, {
+        renderKey,
+        field: col.field,
+        sourceTable: col.sourceTable,
+        origin: { kind: "action-dynamic", actionKey: ab.actionKey },
+      });
+      continue;
+    }
+    // Sin fuente ni FieldSpec emparejable ⇒ no se emite binding.
+  }
+  return Array.from(byRenderKey.values());
+}
+
+/**
  * Mapa nombre-de-campo → etiqueta legible para el formulario autogenerado desde
  * inputFields (crear / acciones custom / SELECT). Empareja cada FieldSpec con su
  * DisplayColumn por el MISMO criterio que buildColumnFields/dynamicColumnBindings:
@@ -281,6 +391,57 @@ export function fieldLabelsForAction(
     }
   }
   return out;
+}
+
+/**
+ * Origen de opciones de una columna al CREAR/EDITAR, aplicando la precedencia
+ * columna > FieldSpec de acción (FEAT-004). Devuelve:
+ *   - "static": lista estática (de la columna o de un FieldSpec select); el
+ *     desplegable se puebla con `options` y opcionalmente `defaultValue`.
+ *   - "dynamic": lista DINÁMICA de la COLUMNA (valueSource.kind === "dynamic");
+ *     se carga por columna con useModuleColumnOptions (desambigua por
+ *     `sourceTable`).
+ *   - "action-dynamic": lista DINÁMICA de un FieldSpec de acción (ruta histórica
+ *     con useModuleFieldOptions sobre `field`).
+ *   - "action-select": lista ESTÁTICA de un FieldSpec select (opciones directas).
+ *   - "plain": control editable normal (sin opciones).
+ * La precedencia de la columna se evalúa PRIMERO; solo si la columna no declara
+ * una fuente utilizable se mira el FieldSpec emparejado por
+ * (f.name === col.field) && ((f.sourceTable ?? principal) === (col.sourceTable ?? principal)).
+ */
+export type ColumnOptionSource =
+  | { readonly mode: "static"; readonly options: ReadonlyArray<SelectOption>; readonly defaultValue?: string }
+  | { readonly mode: "dynamic"; readonly sourceTable?: string }
+  | { readonly mode: "action-dynamic"; readonly field: string }
+  | { readonly mode: "action-select"; readonly field: string }
+  | { readonly mode: "plain" };
+
+export function resolveColumnOptionSource(
+  col: DisplayColumn,
+  action: ModuleAction,
+  principal: string,
+): ColumnOptionSource {
+  const vs = col.valueSource;
+  // Precedencia columna: estática en memoria o dinámica por columna.
+  if (vs && vs.kind === "static" && vs.options && vs.options.length > 0) {
+    return { mode: "static", options: vs.options };
+  }
+  if (vs && vs.kind === "dynamic" && vs.dynamicSource != null) {
+    return { mode: "dynamic", sourceTable: col.sourceTable };
+  }
+  // Fallback: FieldSpec de la acción emparejado por (name, sourceTable).
+  const spec = (action.inputFields ?? []).find(
+    (f) =>
+      f.name === col.field &&
+      (f.sourceTable ?? principal) === (col.sourceTable ?? principal),
+  );
+  if (spec?.source === "dynamic" && spec.dynamicSource != null) {
+    return { mode: "action-dynamic", field: spec.name };
+  }
+  if (spec?.source === "select") {
+    return { mode: "action-select", field: spec.name };
+  }
+  return { mode: "plain" };
 }
 
 /** Tipo de campo de entrada inferido del formato de una columna. */
@@ -386,15 +547,101 @@ function FieldOptionsFetcher({
 }
 
 /**
- * Carga las opciones de UNA columna dinámica del grid (un hook por columna,
- * componente aparte para respetar las reglas de hooks con una cantidad variable
- * de columnas) y reporta al padre un mapa id→etiqueta. Usa el MISMO hook y la
- * MISMA queryKey `moduleKeys.options(slug, field, actionKey)` que el desplegable
- * de crear/editar, de modo que TanStack deduplica/comparte la respuesta: una
- * sola petición por (slug, field, action) sin importar cuántas filas haya. No
- * renderiza nada, igual que `FieldOptionsFetcher`.
+ * Carga las opciones de UNA columna DINÁMICA por su propia fuente de valores
+ * (valueSource.kind === "dynamic") con `useModuleColumnOptions` y las reporta al
+ * padre vía `onLoaded` KEYEADAS POR renderKey (no por f.name), para poblar el
+ * desplegable de crear/editar sin colisionar columnas homónimas. Paralelo a
+ * `FieldOptionsFetcher` (que usa la queryKey de acción). No renderiza nada.
  */
-function ColumnLabelFetcher({
+function ColumnOptionsFetcher({
+  slug,
+  field,
+  sourceTable,
+  renderKey,
+  onLoaded,
+}: {
+  readonly slug: string;
+  readonly field: string;
+  readonly sourceTable?: string;
+  readonly renderKey: string;
+  readonly onLoaded: (renderKey: string, entry: DynamicOptionsEntry) => void;
+}): null {
+  const { data, isLoading, isError } = useModuleColumnOptions(slug, field, sourceTable);
+  React.useEffect(() => {
+    // Invariante id SIEMPRE string: value = String(id), label = String(label).
+    const options: SelectOption[] = (data ?? []).map((opt) => ({
+      value: String(opt.id),
+      label: String(opt.label),
+    }));
+    onLoaded(renderKey, { options, loading: isLoading, error: isError });
+  }, [renderKey, data, isLoading, isError, onLoaded]);
+  return null;
+}
+
+/**
+ * Reporta al padre un mapa id→etiqueta armado EN MEMORIA a partir de una lista
+ * ESTÁTICA (columna con valueSource.kind === "static"). No hace fetch: el mapa se
+ * deriva de `options` en un `useEffect` y se reporta vía `onLoaded`. La identidad
+ * de `options` es estable (sale de la definición), por lo que el efecto no se
+ * redispara en cada render. No renderiza nada, igual que los demás fetchers.
+ */
+function ColumnStaticLabelFetcher({
+  options,
+  renderKey,
+  onLoaded,
+}: {
+  readonly options: ReadonlyArray<SelectOption>;
+  readonly renderKey: string;
+  readonly onLoaded: (renderKey: string, map: ReadonlyMap<string, string>) => void;
+}): null {
+  React.useEffect(() => {
+    // Invariante id SIEMPRE string: clave normalizada con String(...).
+    const map = new Map(options.map((o) => [String(o.value), String(o.label)]));
+    onLoaded(renderKey, map);
+  }, [renderKey, options, onLoaded]);
+  return null;
+}
+
+/**
+ * Carga las opciones de UNA columna DINÁMICA del grid por su propia fuente de
+ * valores (valueSource.kind === "dynamic") con `useModuleColumnOptions` y reporta
+ * al padre un mapa id→etiqueta. Un hook por columna; comparte caché (misma
+ * queryKey `moduleKeys.columnOptions(slug, field, sourceTable)`) con el
+ * desplegable de crear/editar. No renderiza nada.
+ */
+function ColumnDynamicLabelFetcher({
+  slug,
+  field,
+  sourceTable,
+  renderKey,
+  onLoaded,
+}: {
+  readonly slug: string;
+  readonly field: string;
+  readonly sourceTable?: string;
+  readonly renderKey: string;
+  readonly onLoaded: (renderKey: string, map: ReadonlyMap<string, string>) => void;
+}): null {
+  const { data } = useModuleColumnOptions(slug, field, sourceTable);
+  React.useEffect(() => {
+    // Invariante id SIEMPRE string: clave y valor normalizados con String(...).
+    const map = new Map<string, string>();
+    for (const opt of data ?? []) {
+      map.set(String(opt.id), String(opt.label));
+    }
+    onLoaded(renderKey, map);
+  }, [renderKey, data, onLoaded]);
+  return null;
+}
+
+/**
+ * Carga las opciones de UNA columna del grid resuelta por un FieldSpec DINÁMICO
+ * de acción (ruta histórica) con `useModuleFieldOptions` y reporta al padre un
+ * mapa id→etiqueta. Un hook por columna; comparte caché (misma queryKey
+ * `moduleKeys.options(slug, field, actionKey)`) con el desplegable de
+ * crear/editar. No renderiza nada.
+ */
+function ColumnActionLabelFetcher({
   slug,
   field,
   actionKey,
@@ -417,6 +664,58 @@ function ColumnLabelFetcher({
     onLoaded(renderKey, map);
   }, [renderKey, data, onLoaded]);
   return null;
+}
+
+/**
+ * Despacha la carga del mapa id→etiqueta de UNA columna del grid según su
+ * `ColumnSourceBinding.origin` (FEAT-004), aplicando la precedencia ya resuelta
+ * en `columnValueSourceBindings`:
+ *   - "column-static": mapa en memoria sin fetch.
+ *   - "column-dynamic": 1 fetch por columna (useModuleColumnOptions).
+ *   - "action-dynamic": fetch por el FieldSpec de acción (useModuleFieldOptions).
+ * Cada rama monta un componente leaf ESTABLE (un hook fijo por rama), de modo que
+ * el `kind` del binding de una columna no cambia entre renders y las reglas de
+ * hooks se respetan. No renderiza nada.
+ */
+function ColumnSourceLabelFetcher({
+  slug,
+  binding,
+  onLoaded,
+}: {
+  readonly slug: string;
+  readonly binding: ColumnSourceBinding;
+  readonly onLoaded: (renderKey: string, map: ReadonlyMap<string, string>) => void;
+}): React.ReactElement {
+  const { origin, renderKey, field, sourceTable } = binding;
+  if (origin.kind === "column-static") {
+    return (
+      <ColumnStaticLabelFetcher
+        options={origin.options}
+        renderKey={renderKey}
+        onLoaded={onLoaded}
+      />
+    );
+  }
+  if (origin.kind === "column-dynamic") {
+    return (
+      <ColumnDynamicLabelFetcher
+        slug={slug}
+        field={field}
+        sourceTable={sourceTable}
+        renderKey={renderKey}
+        onLoaded={onLoaded}
+      />
+    );
+  }
+  return (
+    <ColumnActionLabelFetcher
+      slug={slug}
+      field={field}
+      actionKey={origin.actionKey}
+      renderKey={renderKey}
+      onLoaded={onLoaded}
+    />
+  );
 }
 
 export interface ModuleViewProps {
@@ -489,6 +788,32 @@ export function ModuleView({ slug }: ModuleViewProps) {
     [],
   );
 
+  // Opciones cargadas de las columnas DINÁMICAS por su propia fuente de valores
+  // (valueSource.kind === "dynamic"), keyeadas por renderKey para NO colisionar
+  // columnas homónimas (a diferencia de dynamicOptions, keyeado por f.name que sí
+  // colisiona entre tablas). Lo llena un fetcher por columna (useModuleColumnOptions)
+  // montado SOLO con el formulario de crear/editar abierto. Paralelo a dynamicOptions.
+  const [columnOptionsByRenderKey, setColumnOptionsByRenderKey] =
+    React.useState<DynamicOptionsMap>({});
+
+  const onColumnOptionsLoaded = React.useCallback(
+    (renderKey: string, entry: DynamicOptionsEntry) => {
+      setColumnOptionsByRenderKey((prev) => {
+        const curr = prev[renderKey];
+        if (
+          curr &&
+          curr.loading === entry.loading &&
+          curr.error === entry.error &&
+          curr.options === entry.options
+        ) {
+          return prev;
+        }
+        return { ...prev, [renderKey]: entry };
+      });
+    },
+    [],
+  );
+
   const { data: def, isLoading: defLoading, isError: defError } = useModuleDef(slug);
 
   const params: ListParams = React.useMemo(
@@ -549,15 +874,17 @@ export function ModuleView({ slug }: ModuleViewProps) {
     return typeof t === "string" ? t : "";
   }, [def]);
 
-  // Bindings de columnas DINÁMICAS del grid (renderKey → field+actionKey). Si la
-  // lista queda vacía no se monta ningún ColumnLabelFetcher ⇒ cero fetches.
-  const dynamicBindings = React.useMemo(
-    () => dynamicColumnBindings(def, displayColumns, multiTable, principalTable),
+  // Bindings de fuente de valores de las columnas VISIBLES del grid (renderKey →
+  // origen resuelto con precedencia columna > acción). Si la lista queda vacía no
+  // se monta ningún fetcher ⇒ cero fetches; las columnas "column-static" no hacen
+  // fetch (mapa en memoria). Reemplaza al antiguo dynamicColumnBindings.
+  const columnBindings = React.useMemo(
+    () => columnValueSourceBindings(def, displayColumns, multiTable, principalTable),
     [def, displayColumns, multiTable, principalTable],
   );
   const bindingByRenderKey = React.useMemo(
-    () => new Map(dynamicBindings.map((b) => [b.renderKey, b] as const)),
-    [dynamicBindings],
+    () => new Map(columnBindings.map((b) => [b.renderKey, b] as const)),
+    [columnBindings],
   );
 
   // Columnas que forman la llave primaria (para el WHERE de editar/eliminar).
@@ -631,28 +958,45 @@ export function ModuleView({ slug }: ModuleViewProps) {
           });
           continue;
         }
-        if (spec?.source === "select") {
+        // Precedencia columna > acción (FEAT-004): la fuente de valores de la
+        // COLUMNA manda sobre el FieldSpec de la acción para poblar el desplegable.
+        const optionSource = resolveColumnOptionSource(c, action, principalTable);
+        if (optionSource.mode === "static") {
+          // Lista estática de la columna: opciones directas (sin fetch).
           out.push({
             field: c.field,
             label: c.label,
             type: fieldTypeFromFormat(c.format),
             readOnly: false,
-            required: spec.required,
-            options: spec.options ?? [],
-            defaultValue: spec.defaultValue,
+            required: spec?.required ?? false,
+            options: optionSource.options,
+            defaultValue: optionSource.defaultValue,
           });
           continue;
         }
-        if (spec?.source === "dynamic") {
-          // Lista dinámica: se renderiza como desplegable. Las opciones (y el
-          // estado de carga/error) los inyecta el padre tras cargarlas del
-          // endpoint; aquí se declara `options: []` para forzar el <select>.
+        if (optionSource.mode === "action-select") {
           out.push({
             field: c.field,
             label: c.label,
             type: fieldTypeFromFormat(c.format),
             readOnly: false,
-            required: spec.required,
+            required: spec?.required ?? false,
+            options: spec?.options ?? [],
+            defaultValue: spec?.defaultValue,
+          });
+          continue;
+        }
+        if (optionSource.mode === "dynamic" || optionSource.mode === "action-dynamic") {
+          // Lista dinámica (de la columna o del FieldSpec de acción): se renderiza
+          // como desplegable. Las opciones (y el estado de carga/error) los inyecta
+          // el padre tras cargarlas del endpoint; aquí se declara `options: []`
+          // para forzar el <select>.
+          out.push({
+            field: c.field,
+            label: c.label,
+            type: fieldTypeFromFormat(c.format),
+            readOnly: false,
+            required: spec?.required ?? false,
             options: [],
           });
           continue;
@@ -668,9 +1012,10 @@ export function ModuleView({ slug }: ModuleViewProps) {
       }
       return out;
     },
-    // Las PK ya no se renderizan (su valor viaja por la fila en composeEditInput),
-    // así que este builder ya no depende de multiTable/principalTable.
-    [allColumns],
+    // Vuelve a depender de multiTable/principalTable: resolveColumnOptionSource
+    // empareja el FieldSpec por (name, sourceTable) usando la tabla principal, de
+    // modo que el emparejamiento cambia si cambia la principal / el modo tabla.
+    [allColumns, multiTable, principalTable],
   );
 
   // Compone el input final de una acción de editar: valores editables del
@@ -702,6 +1047,7 @@ export function ModuleView({ slug }: ModuleViewProps) {
     setActiveRow(null);
     setMode(null);
     setDynamicOptions({});
+    setColumnOptionsByRenderKey({});
     actionMutation.reset();
   }, [actionMutation]);
 
@@ -933,14 +1279,53 @@ export function ModuleView({ slug }: ModuleViewProps) {
     [activeAction],
   );
 
+  // Resolución de la fuente de opciones POR CAMPO para el formulario de la acción
+  // activa, aplicando la precedencia columna > acción (FEAT-004). Para cada
+  // columna que la acción activa toca y que resuelve a una lista DINÁMICA de la
+  // propia COLUMNA (mode === "dynamic"), guarda { renderKey, field, sourceTable };
+  // esas opciones se cargan por COLUMNA (columnOptionsByRenderKey) en vez de por
+  // el FieldSpec de la acción. Las columnas que caen en "action-dynamic" siguen la
+  // ruta histórica (dynamicOptions por f.name). Clave del mapa = nombre de columna
+  // (== f.name del campo que la referencia).
+  const columnDynamicByField = React.useMemo(() => {
+    const out = new Map<string, { renderKey: string; field: string; sourceTable?: string }>();
+    if (!activeAction) {
+      return out;
+    }
+    for (const c of allColumns) {
+      const src = resolveColumnOptionSource(c, activeAction, principalTable);
+      if (src.mode === "dynamic") {
+        out.set(c.field, {
+          renderKey: renderKeyFor(c, multiTable, principalTable),
+          field: c.field,
+          sourceTable: c.sourceTable,
+        });
+      }
+    }
+    return out;
+  }, [activeAction, allColumns, principalTable, multiTable]);
+
+  // Bindings de columna-dinámica de la acción activa (para montar un
+  // ColumnOptionsFetcher por columna SOLO con el formulario abierto).
+  const activeColumnDynamicBindings = React.useMemo(
+    () => Array.from(columnDynamicByField.values()),
+    [columnDynamicByField],
+  );
+
   // Construye la lista de opciones de un campo dinámico para el <select>,
   // aplicando la tolerancia a id COLGANTE al editar (R8): si el id actual de la
   // fila (rawId) no coincide (SIEMPRE comparado como string) con ninguna opción
   // cargada, se PREPENDE una opción de respaldo { value, label } = String(rawId)
   // y se preselecciona. Si la carga falló (502), se muestra solo esa opción.
+  // La fuente de las opciones depende del mode resuelto: columna-dinámica lee de
+  // columnOptionsByRenderKey (keyeado por renderKey, sin colisión de homónimas);
+  // el resto (FieldSpec dinámico de acción) lee de dynamicOptions por f.name.
   const optionsForField = React.useCallback(
     (fieldName: string, rawId: unknown): ReadonlyArray<SelectOption> => {
-      const entry = dynamicOptions[fieldName];
+      const colDyn = columnDynamicByField.get(fieldName);
+      const entry = colDyn
+        ? columnOptionsByRenderKey[colDyn.renderKey]
+        : dynamicOptions[fieldName];
       const loaded = entry?.options ?? [];
       const hasRaw = rawId !== undefined && rawId !== null && String(rawId) !== "";
       if (!hasRaw) {
@@ -954,14 +1339,32 @@ export function ModuleView({ slug }: ModuleViewProps) {
       // Id colgante (o carga fallida): opción de respaldo con el id crudo.
       return [{ value: rawStr, label: rawStr }, ...loaded];
     },
-    [dynamicOptions],
+    [columnDynamicByField, columnOptionsByRenderKey, dynamicOptions],
   );
 
-  // Nombres de campo dinámicos (para marcar qué inyectar) de la acción activa.
-  const dynamicFieldNames = React.useMemo(
-    () => new Set(dynamicFields.map((f) => f.name)),
-    [dynamicFields],
+  // Devuelve el estado de carga/error de las opciones de un campo según su
+  // fuente resuelta (columna-dinámica vs FieldSpec de acción).
+  const optionsStatusForField = React.useCallback(
+    (fieldName: string): { loading: boolean; error: boolean } => {
+      const colDyn = columnDynamicByField.get(fieldName);
+      const entry = colDyn
+        ? columnOptionsByRenderKey[colDyn.renderKey]
+        : dynamicOptions[fieldName];
+      return { loading: entry?.loading ?? true, error: entry?.error ?? false };
+    },
+    [columnDynamicByField, columnOptionsByRenderKey, dynamicOptions],
   );
+
+  // Nombres de campo que se renderizan como desplegable DINÁMICO (para marcar qué
+  // inyectar): los del FieldSpec dinámico de la acción MÁS los de columnas con
+  // fuente dinámica propia (precedencia columna, FEAT-004).
+  const dynamicFieldNames = React.useMemo(() => {
+    const names = new Set(dynamicFields.map((f) => f.name));
+    for (const name of columnDynamicByField.keys()) {
+      names.add(name);
+    }
+    return names;
+  }, [dynamicFields, columnDynamicByField]);
 
   // ColumnFields del formulario de EDITAR (Opción B) con las opciones dinámicas
   // ya inyectadas (opciones cargadas + respaldo de id colgante + loading/error).
@@ -972,16 +1375,16 @@ export function ModuleView({ slug }: ModuleViewProps) {
         if (!dynamicFieldNames.has(cf.field)) {
           return cf;
         }
-        const entry = dynamicOptions[cf.field];
+        const status = optionsStatusForField(cf.field);
         return {
           ...cf,
           options: optionsForField(cf.field, activeRow?.[cf.field]),
-          optionsLoading: entry?.loading ?? true,
-          optionsError: entry?.error ?? false,
+          optionsLoading: status.loading,
+          optionsError: status.error,
         };
       });
     },
-    [buildColumnFields, dynamicFieldNames, dynamicOptions, optionsForField, activeRow],
+    [buildColumnFields, dynamicFieldNames, optionsStatusForField, optionsForField, activeRow],
   );
 
   // Acción con las opciones dinámicas inyectadas en sus inputFields (camino
@@ -991,26 +1394,40 @@ export function ModuleView({ slug }: ModuleViewProps) {
     if (!activeAction) {
       return null;
     }
-    if (dynamicFields.length === 0) {
+    // Sin campos dinámicos de acción NI columnas con fuente dinámica propia:
+    // nada que inyectar.
+    if (dynamicFields.length === 0 && columnDynamicByField.size === 0) {
       return activeAction;
     }
     return {
       ...activeAction,
       inputFields: activeAction.inputFields.map((f) => {
-        if (f.source !== "dynamic") {
+        // Se enriquece el campo si es dinámico por el FieldSpec o si su columna
+        // homónima aporta una fuente dinámica propia (precedencia columna).
+        if (f.source !== "dynamic" && !columnDynamicByField.has(f.name)) {
           return f;
         }
-        const entry = dynamicOptions[f.name];
+        const status = optionsStatusForField(f.name);
         const rawId = activeRow ? activeRow[f.name] : undefined;
         return {
           ...f,
+          // Fuerza el <select> dinámico aunque el FieldSpec fuera input/select:
+          // la fuente de valores la define ahora la columna.
+          source: "dynamic",
           options: [...optionsForField(f.name, rawId)],
-          optionsLoading: entry?.loading ?? true,
-          optionsError: entry?.error ?? false,
+          optionsLoading: status.loading,
+          optionsError: status.error,
         };
       }),
     };
-  }, [activeAction, dynamicFields, dynamicOptions, optionsForField, activeRow]);
+  }, [
+    activeAction,
+    dynamicFields,
+    columnDynamicByField,
+    optionsStatusForField,
+    optionsForField,
+    activeRow,
+  ]);
 
   // Etiquetas de columna para los campos de la rama inputFields (crear/custom/
   // SELECT). Se calcula de activeAction.inputFields (no del enriquecido: este
@@ -1143,24 +1560,24 @@ export function ModuleView({ slug }: ModuleViewProps) {
         emptyMessage="Sin registros"
       />
 
-      {/* Carga las opciones de las columnas DINÁMICAS del grid (un fetcher por
-          columna) para resolver id→etiqueta en la celda. Se montan SOLO si hay
-          columnas dinámicas; si no, el .map no monta nada ⇒ cero fetches.
-          Comparten caché (misma queryKey) con el desplegable de crear/editar. */}
-      {dynamicBindings.map((b) => (
-        <ColumnLabelFetcher
+      {/* Carga las opciones de las columnas del grid con fuente de valores (un
+          fetcher por columna) para resolver id→etiqueta en la celda. Se montan
+          SOLO si hay bindings; "column-static" arma el mapa en memoria sin fetch,
+          "column-dynamic"/"action-dynamic" comparten caché con el desplegable de
+          crear/editar. Si no hay bindings, el .map no monta nada ⇒ cero fetches. */}
+      {columnBindings.map((b) => (
+        <ColumnSourceLabelFetcher
           key={b.renderKey}
           slug={slug}
-          field={b.field}
-          actionKey={b.actionKey}
-          renderKey={b.renderKey}
+          binding={b}
           onLoaded={onColumnLabelsLoaded}
         />
       ))}
 
       {/* Carga las opciones de los campos dinámicos de la acción activa SOLO
           con el formulario abierto (un fetcher por campo, componentes aparte
-          para respetar las reglas de hooks). */}
+          para respetar las reglas de hooks). Estos son los FieldSpec dinámicos
+          (ruta de acción, keyeados por f.name). */}
       {mode === "form" && activeAction
         ? dynamicFields.map((f) => (
             <FieldOptionsFetcher
@@ -1169,6 +1586,23 @@ export function ModuleView({ slug }: ModuleViewProps) {
               field={f.name}
               actionKey={activeAction.actionKey}
               onLoaded={onDynamicOptionsLoaded}
+            />
+          ))
+        : null}
+
+      {/* Carga las opciones de las COLUMNAS con fuente dinámica propia que la
+          acción activa toca (precedencia columna, FEAT-004), un fetcher por
+          columna keyeado por renderKey para no colisionar homónimas. Solo con el
+          formulario abierto. */}
+      {mode === "form" && activeAction
+        ? activeColumnDynamicBindings.map((b) => (
+            <ColumnOptionsFetcher
+              key={b.renderKey}
+              slug={slug}
+              field={b.field}
+              sourceTable={b.sourceTable}
+              renderKey={b.renderKey}
+              onLoaded={onColumnOptionsLoaded}
             />
           ))
         : null}
