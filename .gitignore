@@ -57,6 +57,8 @@ Thumbs.db
 # ----- Artefactos internos de agentes / herramienta (no publicar) -----
 .agents/
 .kiro/
+.claude/
+/skills-lock.json
 
 # ----- Documentación de contexto interna (no publicar; se conserva en disco) -----
 /design.md
