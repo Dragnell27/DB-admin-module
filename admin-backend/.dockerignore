@@ -1,0 +1,28 @@
+# Mantener liviano el contexto de build del admin-backend.
+
+# Control de versiones
+.git
+.gitignore
+
+# Secretos y configuración local (nunca en la imagen)
+.env
+.env.*
+!.env.example
+
+# Artefactos de build y binarios locales
+/bin
+/tmp
+*.exe
+api
+seed
+
+# Herramientas de desarrollo
+.air.toml
+
+# Pruebas (los binarios no las necesitan en runtime)
+*_test.go
+
+# Documentación y metadatos del editor
+*.md
+.vscode
+.idea

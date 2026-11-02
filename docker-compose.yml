@@ -1,0 +1,138 @@
+# ============================================================
+# panel-admin-ott — Orquestación local (Req. 21)
+#
+# Tres servicios: db (PostgreSQL), admin-backend (BFF Go + Gin) y
+# admin-frontend (Next.js). Toda la configuración proviene de variables
+# de entorno; no se incrustan secretos en este archivo (Req. 21.5, 23).
+#
+# Uso rápido:
+#   1) Copia el `.env.example` de la raíz a `.env` y completa los valores.
+#      (Compose auto-carga el `.env` de la raíz y lo usa para interpolar
+#       las variables ${VAR} de abajo.)
+#   2) docker compose up --build
+#
+# Puertos expuestos en el host:
+#   - admin-frontend : 3000
+#   - admin-backend  : 8081
+#   - db             : 5432 (ligado a 127.0.0.1, solo para depuración local)
+#
+# Migraciones: el admin-backend aplica las migraciones golang-migrate al
+# arrancar (ver internal/db/migrate.go), por lo que no requiere un paso
+# manual.
+#
+# Seed del administrador inicial (comando puntual, una sola vez):
+#   docker compose run --rm admin-backend /app/seed
+# (La imagen incluye el binario /app/seed junto al servidor /app/api.)
+# ============================================================
+
+services:
+  # ----------------------------------------------------------
+  # Base de datos PostgreSQL con volumen persistente y healthcheck.
+  # ----------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-admin_ott}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+      POSTGRES_DB: ${DB_NAME:-admin_ott}
+    # Puerto ligado a localhost: accesible para depuración local, no
+    # publicado hacia el exterior. Los servicios internos usan la red de
+    # Compose (host "db", puerto 5432).
+    ports:
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      # pg_isready confirma que el servidor acepta conexiones (Req. 21.3).
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-admin_ott} -d ${DB_NAME:-admin_ott}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ----------------------------------------------------------
+  # BFF Go + Gin. Depende de que la base de datos esté saludable, aplica
+  # migraciones al arrancar y expone un healthcheck en GET /health.
+  # ----------------------------------------------------------
+  admin-backend:
+    build:
+      context: ./admin-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # ----- Servidor HTTP -----
+      PORT: "8081"
+      CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:-http://localhost:3000}
+      # ----- Base de datos: apunta al servicio "db" de esta red -----
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_USER: ${DB_USER:-admin_ott}
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      DB_NAME: ${DB_NAME:-admin_ott}
+      DB_SSLMODE: ${DB_SSLMODE:-disable}
+      # ----- JWT de sesión del admin -----
+      ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:?ADMIN_JWT_SECRET es obligatorio}
+      ADMIN_JWT_EXPIRES_MINUTES: ${ADMIN_JWT_EXPIRES_MINUTES:-480}
+      # ----- Hashing de contraseñas -----
+      BCRYPT_COST: ${BCRYPT_COST:-12}
+      # ----- Seed del administrador inicial -----
+      SEED_ADMIN_USERNAME: ${SEED_ADMIN_USERNAME:-admin}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-changeme}
+      SEED_ADMIN_ROLE: ${SEED_ADMIN_ROLE:-admin}
+      # ----- Integración con el backend OTT -----
+      # Autenticación y recursos viven en hosts distintos (ver .env.example).
+      OTT_AUTH_BASE_URL: ${OTT_AUTH_BASE_URL:-}
+      OTT_BASE_URL: ${OTT_BASE_URL:-http://host.docker.internal:8080/api/v1}
+      OTT_ACTIVE_COUNTRY: ${OTT_ACTIVE_COUNTRY:-gt}
+      # ----- Credenciales OTT por país (vacías por defecto) -----
+      OTT_GT_CLIENT_ID: ${OTT_GT_CLIENT_ID:-}
+      OTT_GT_CLIENT_SECRET: ${OTT_GT_CLIENT_SECRET:-}
+      OTT_SV_CLIENT_ID: ${OTT_SV_CLIENT_ID:-}
+      OTT_SV_CLIENT_SECRET: ${OTT_SV_CLIENT_SECRET:-}
+      OTT_NI_CLIENT_ID: ${OTT_NI_CLIENT_ID:-}
+      OTT_NI_CLIENT_SECRET: ${OTT_NI_CLIENT_SECRET:-}
+      OTT_HN_CLIENT_ID: ${OTT_HN_CLIENT_ID:-}
+      OTT_HN_CLIENT_SECRET: ${OTT_HN_CLIENT_SECRET:-}
+      OTT_CR_CLIENT_ID: ${OTT_CR_CLIENT_ID:-}
+      OTT_CR_CLIENT_SECRET: ${OTT_CR_CLIENT_SECRET:-}
+    ports:
+      - "${BACKEND_PORT:-8081}:8081"
+    extra_hosts:
+      # Permite resolver host.docker.internal en Linux (ya existe en
+      # Docker Desktop para Mac/Windows).
+      - "host.docker.internal:host-gateway"
+    # Healthcheck del admin-backend (Req. 21.4): el BFF expone GET /health.
+    # La imagen de runtime es distroless (sin shell ni curl/wget), por lo
+    # que la sonda se ejecuta DESDE el host con `docker inspect` del propio
+    # endpoint publicado, no dentro del contenedor. Para habilitar un
+    # healthcheck de contenedor nativo haría falta un binario de sondeo en
+    # la imagen (p. ej. un subcomando "healthcheck" del binario Go o un
+    # wget estático), que corresponde al Dockerfile (tarea 18.1). Aquí se
+    # declara la sonda como `disable: true` para no marcar el servicio como
+    # "unhealthy" con un comando inexistente; el frontend arranca con
+    # `service_started` y el endpoint /health queda verificable en :8081.
+    healthcheck:
+      disable: true
+
+  # ----------------------------------------------------------
+  # Frontend Next.js (standalone). La URL del BFF se incrusta en el
+  # bundle en build-time (NEXT_PUBLIC_*), por eso se pasa como build-arg.
+  # ----------------------------------------------------------
+  admin-frontend:
+    build:
+      context: ./admin-frontend
+      args:
+        NEXT_PUBLIC_ADMIN_API_URL: ${NEXT_PUBLIC_ADMIN_API_URL:-http://localhost:8081}
+    restart: unless-stopped
+    depends_on:
+      admin-backend:
+        condition: service_started
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+
+volumes:
+  db_data:
+    driver: local

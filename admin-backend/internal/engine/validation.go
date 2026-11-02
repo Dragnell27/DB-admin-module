@@ -1,0 +1,183 @@
+package engine
+
+import (
+	"errors"
+	"fmt"
+	"time"
+
+	"admin-backend/internal/modules"
+)
+
+// ErrValidation indica que el input de una acción no satisface los campos de
+// entrada declarados (obligatorio ausente o tipo incompatible). El router lo
+// traduce al errorCode E422_VALIDATION sin ejecutar la operación (Req. 10.6,
+// 10.7).
+var ErrValidation = errors.New("engine: validación de campos de entrada fallida")
+
+// Tipos de campo de entrada soportados en v1 (Req. 10.3; design "Validación de
+// campos de entrada").
+const (
+	FieldTypeString  = "string"
+	FieldTypeNumber  = "number"
+	FieldTypeBoolean = "boolean"
+	FieldTypeDate    = "date"
+)
+
+// ValidateInput valida el input de una acción contra sus campos declarados:
+// cada campo obligatorio debe estar presente y no vacío, y todo valor presente
+// debe ser coherente con el tipo declarado. Devuelve un error que envuelve
+// ErrValidation (con el campo culpable) si falla; nil si el input es válido.
+// Acepta el input si y solo si TODOS los obligatorios están presentes y los
+// tipos coinciden (propiedad 7).
+func ValidateInput(fields []modules.FieldSpec, input map[string]any) error {
+	for _, f := range fields {
+		// Un campo constante no toma su valor del input: su valor es literal y
+		// fijo, por lo que no se valida obligatoriedad ni tipo contra el input.
+		if f.Source == "constant" {
+			continue
+		}
+		// Un campo "select" toma su valor de una lista cerrada de opciones. Si el
+		// input no trae valor se acepta cuando hay DefaultValue (o es opcional);
+		// si trae valor, debe pertenecer a las opciones. No se valida por tipo:
+		// el contrato del select es "estar entre las opciones".
+		if f.Source == "select" {
+			raw, present := input[f.Name]
+			if !present || isEmptyValue(raw) {
+				if f.Required && f.DefaultValue == "" {
+					return fmt.Errorf("%w: el campo %q es obligatorio", ErrValidation, f.Name)
+				}
+				continue // se usará el DefaultValue (o es opcional)
+			}
+			if !isAllowedOption(f.Options, raw) {
+				return fmt.Errorf("%w: el valor del campo %q no está entre las opciones permitidas", ErrValidation, f.Name)
+			}
+			continue
+		}
+		// Un campo "dynamic" toma su valor de una lista de opciones obtenida en
+		// tiempo de ejecución de otra tabla; lo que viaja es el id (clave foránea)
+		// de la opción elegida. Solo se valida PRESENCIA: el id viaja como
+		// parámetro ligado y Postgres lo coacciona al tipo de la columna FK, de
+		// modo que no se valida por tipo (un id numérico o string se acepta).
+		if f.Source == modules.FieldSourceDynamic {
+			raw, present := input[f.Name]
+			if !present || isEmptyValue(raw) {
+				if f.Required {
+					return fmt.Errorf("%w: el campo %q es obligatorio", ErrValidation, f.Name)
+				}
+				continue // opcional ausente: se omite
+			}
+			continue // presente: aceptado sin checkType
+		}
+		raw, present := input[f.Name]
+		if !present || isEmptyValue(raw) {
+			if f.Required {
+				return fmt.Errorf("%w: el campo %q es obligatorio", ErrValidation, f.Name)
+			}
+			continue // campo opcional ausente: se omite
+		}
+		if err := checkType(f, raw); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// isAllowedOption indica si raw coincide con el Value de alguna opción. Compara
+// su representación textual (fmt.Sprintf("%v", raw)) contra cada opt.Value, de
+// forma coherente con cómo resolveActionFields imprime el valor enviado.
+func isAllowedOption(opts []modules.SelectOption, raw any) bool {
+	s := fmt.Sprintf("%v", raw)
+	for _, opt := range opts {
+		if opt.Value == s {
+			return true
+		}
+	}
+	return false
+}
+
+// isEmptyValue indica si un valor cuenta como "ausente" para la obligatoriedad:
+// nil o cadena vacía/espacios. Los ceros numéricos y false NO se consideran
+// vacíos (son valores legítimos).
+func isEmptyValue(v any) bool {
+	if v == nil {
+		return true
+	}
+	if s, ok := v.(string); ok {
+		return len(trimSpace(s)) == 0
+	}
+	return false
+}
+
+// checkType verifica que raw sea coherente con el tipo declarado del campo. Los
+// valores llegan de un JSON decodificado, por lo que los números son float64 y
+// se aceptan también sus formas textuales razonables.
+func checkType(f modules.FieldSpec, raw any) error {
+	switch f.Type {
+	case FieldTypeString, "":
+		if _, ok := raw.(string); !ok {
+			return typeErr(f, raw)
+		}
+	case FieldTypeNumber:
+		if !isNumber(raw) {
+			return typeErr(f, raw)
+		}
+	case FieldTypeBoolean:
+		if _, ok := raw.(bool); !ok {
+			return typeErr(f, raw)
+		}
+	case FieldTypeDate:
+		if !isDate(raw) {
+			return typeErr(f, raw)
+		}
+	default:
+		// Tipo desconocido: no se valida el tipo (se acepta el valor presente).
+	}
+	return nil
+}
+
+// isNumber acepta los números de un JSON decodificado (float64) y, por
+// robustez, los enteros nativos de Go.
+func isNumber(v any) bool {
+	switch v.(type) {
+	case float64, float32, int, int64, int32:
+		return true
+	default:
+		return false
+	}
+}
+
+// isDate acepta una fecha como cadena en formato RFC3339 o YYYY-MM-DD.
+func isDate(v any) bool {
+	s, ok := v.(string)
+	if !ok {
+		return false
+	}
+	if _, err := time.Parse(time.RFC3339, s); err == nil {
+		return true
+	}
+	if _, err := time.Parse("2006-01-02", s); err == nil {
+		return true
+	}
+	return false
+}
+
+func typeErr(f modules.FieldSpec, raw any) error {
+	return fmt.Errorf("%w: el campo %q espera tipo %q, se recibió %T", ErrValidation, f.Name, f.Type, raw)
+}
+
+// trimSpace evita importar strings solo para TrimSpace en este archivo pequeño.
+func trimSpace(s string) string {
+	start := 0
+	end := len(s)
+	for start < end && isSpace(s[start]) {
+		start++
+	}
+	for end > start && isSpace(s[end-1]) {
+		end--
+	}
+	return s[start:end]
+}
+
+func isSpace(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\n' || b == '\r'
+}

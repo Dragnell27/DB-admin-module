@@ -1,0 +1,65 @@
+# ============================================================
+# Monorepo panel-admin-ott — .gitignore raíz
+# (No afecta a hub-services-ott, que mantiene su propio .gitignore)
+# ============================================================
+
+# ----- Variables de entorno / secretos -----
+.env
+.env.*
+!.env.example
+*.env.local
+
+# ----- Node / admin-frontend -----
+node_modules/
+.next/
+out/
+.turbo/
+.pnpm-store/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+.eslintcache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ----- Go / admin-backend -----
+# Binarios compilados
+admin-backend/bin/
+admin-backend/tmp/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+# Caché de build de air (hot reload)
+tmp/
+
+# ----- Caches de build / herramientas -----
+.cache/
+.parcel-cache/
+.vite/
+
+# ----- Sistema operativo / editores -----
+.DS_Store
+Thumbs.db
+*.log
+*.swp
+*.swo
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# ----- Artefactos internos de agentes / herramienta (no publicar) -----
+.agents/
+.kiro/
+
+# ----- Documentación de contexto interna (no publicar; se conserva en disco) -----
+/design.md
+/product.md
+/tech.md
+/login/

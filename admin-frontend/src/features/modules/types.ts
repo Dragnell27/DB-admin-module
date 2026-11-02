@@ -1,0 +1,297 @@
+/**
+ * Tipos del constructor de módulos (module-builder) en el frontend. Espejo del
+ * dominio del backend (internal/modules): la Definición de módulo, su origen de
+ * datos (sin credenciales), sus acciones y los campos de entrada. Las
+ * credenciales SOLO se envían al crear/editar (nunca llegan de vuelta: el
+ * backend las omite).
+ */
+
+/** Tipo de origen de datos del módulo. */
+export type SourceType = "postgres";
+
+/** Ámbito de país del módulo. */
+export type CountryScope = "none" | "multi";
+
+/** Tipo de acción. */
+export type ActionKind =
+  | "list"
+  | "search"
+  | "create"
+  | "edit"
+  | "delete"
+  | "custom";
+
+/** Ubicación del botón de una acción. */
+export type Placement = "row" | "header";
+
+/** Tipo de dato de un campo de entrada. */
+export type FieldType = "string" | "number" | "boolean" | "date";
+
+/**
+ * Opción de un campo de tipo "select": una ETIQUETA visible (`label`) y el
+ * VALOR que se envía al elegirla (`value`). La etiqueta puede diferir del valor
+ * (p. ej. etiqueta "Guatemala", valor "gt"). Espejo de modules.SelectOption del
+ * backend.
+ */
+export interface SelectOption {
+  label: string;
+  value: string;
+}
+
+/** Dirección del ORDER BY de una fuente dinámica (conjunto cerrado). */
+export type OrderDirection = "asc" | "desc";
+
+/** ORDER BY estructurado de una fuente dinámica. */
+export interface OrderSpec {
+  column: string;
+  direction: OrderDirection;
+}
+
+/**
+ * Fuente DINÁMICA de un campo (source === "dynamic"): tabla de catálogo +
+ * columna id (lo que se almacena, la referencia FK) + columna etiqueta (lo que
+ * se muestra) + filtros/orden/límite opcionales. Espejo de modules.DynamicSource
+ * del backend. La consulta generada es EXACTAMENTE
+ * `SELECT <idColumn>, <labelColumn> FROM <table> [WHERE ...] [ORDER BY ...] LIMIT N`;
+ * tabla y columnas DEBEN estar en la lista blanca del módulo (el backend valida).
+ */
+export interface DynamicSource {
+  table: string;
+  idColumn: string;
+  labelColumn: string;
+  filters?: ListCondition[];
+  order?: OrderSpec;
+  limit?: number;
+}
+
+/**
+ * Campo de entrada de una acción (alimenta el formulario autogenerado).
+ *
+ * `name` es cómo se llama el parámetro que se ENVÍA a la API/SQL. De dónde sale
+ * su VALOR lo define `source` (mapeo explícito, sin adivinar):
+ *   - "input" (por defecto): lo captura el usuario en el formulario.
+ *   - "row": se autollena desde una columna de la fila seleccionada; `rowField`
+ *     indica qué campo de la fila (p. ej. el parámetro `plan_id` se llena con la
+ *     columna `id`). Aplica a acciones de fila (editar/eliminar/custom por fila).
+ *   - "constant": valor literal fijo (`constValue`) definido al crear el módulo;
+ *     SIEMPRE se envía, no se captura ni se valida contra el input (p. ej. un
+ *     header `country: gt`). El backend lo resuelve desde `constValue`.
+ *   - "select": lista ESTÁTICA de opciones etiqueta/valor (`options`) definida
+ *     en el builder; el usuario elige una en tiempo de ejecución. Puede tener
+ *     una opción preseleccionada (`defaultValue`, el `value` por defecto).
+ *   - "dynamic": lista DINÁMICA cuyas opciones [{id,label}] se cargan en
+ *     ejecución desde una tabla de catálogo (`dynamicSource`); el desplegable
+ *     muestra la etiqueta y, al guardar, persiste el id (la referencia FK).
+ */
+export interface FieldSpec {
+  name: string;
+  type: FieldType;
+  required: boolean;
+  /** Origen del valor del campo: capturado del usuario, de la fila, constante, select o lista dinámica. */
+  source?: "input" | "row" | "constant" | "select" | "dynamic";
+  /** Si source === "row": nombre del campo de la fila del que se toma el valor. */
+  rowField?: string;
+  /** Si source === "constant": valor literal fijo que se envía siempre. */
+  constValue?: string;
+  /** Si source === "select": opciones estáticas (etiqueta/valor) a elegir. */
+  options?: SelectOption[];
+  /** Si source === "select": value de la opción preseleccionada por defecto. */
+  defaultValue?: string;
+  /**
+   * Si source === "dynamic": definición estructurada de la tabla de catálogo de
+   * la que se cargan las opciones [{id,label}] en ejecución (lista DINÁMICA).
+   */
+  dynamicSource?: DynamicSource;
+  /**
+   * SOLO acciones SELECT (filtro de listado): tipo de coincidencia del predicado
+   * que el backend arma con el valor de este campo. "exact" ⇒ igualdad; "partial"
+   * ⇒ LIKE contiene. Ausente ⇒ "exact". El backend es la autoridad de la
+   * semántica SQL; para INSERT/UPDATE/DELETE se ignora.
+   */
+  matchType?: "exact" | "partial";
+  /**
+   * SOLO presentación (origen "dynamic"): el padre (module-view) lo inyecta en la
+   * copia del FieldSpec que renderiza el formulario para indicar que las opciones
+   * se están cargando del endpoint. El backend lo ignora (campo JSON extra).
+   */
+  optionsLoading?: boolean;
+  /**
+   * SOLO presentación (origen "dynamic"): el padre lo inyecta cuando la carga de
+   * opciones falló (502). El backend lo ignora (campo JSON extra).
+   */
+  optionsError?: boolean;
+  /**
+   * Solo para acciones de escritura con source === "constant": si es true, la
+   * columna objetivo NO se muestra en el formulario (flujo tipo "Inactivar"); su
+   * valor lo resuelve el backend desde `constValue`. Preocupación puramente de
+   * presentación; el backend la ignora (campo JSON extra). Ausente = false.
+   */
+  hidden?: boolean;
+  /**
+   * MULTI-TABLA: tabla de origen de la columna OBJETIVO cuando su nombre es
+   * homónimo entre varias tablas (desambigua el emparejamiento por
+   * (sourceTable, name)). Solo se emite si la columna es homónima. Ausente ⇒
+   * principal / única columna con ese nombre.
+   */
+  sourceTable?: string;
+  /**
+   * DEPRECADO: la llave primaria pasó a declararse A NIVEL DE COLUMNA
+   * (`DisplayColumn.isPrimaryKey`). El constructor ya no produce este campo; se
+   * deja opcional solo para no romper el parseo de respuestas antiguas en vuelo.
+   * No usar en código nuevo.
+   */
+  isKey?: boolean;
+}
+
+/** Acción de un módulo (CRUD o personalizada), con su botón. */
+export interface ModuleAction {
+  id?: string;
+  actionKey: string;
+  kind: ActionKind;
+  label: string;
+  placement: Placement;
+  destructive: boolean;
+  /** Acción de permiso RBAC asociada (ver/crear/editar/eliminar/custom:*). */
+  permAction: string;
+  isWrite: boolean;
+  sqlOp?: string;
+  inputFields: FieldSpec[];
+  /**
+   * MULTI-TABLA (acción delete): "tabla tope" hasta la que borra. El conjunto
+   * ordenado hijo→padre se deriva del árbol de relaciones. Ausente ⇒ principal.
+   */
+  deleteTopTable?: string;
+  /**
+   * MULTI-TABLA (acción create): tabla objetivo del INSERT. Ausente ⇒ principal.
+   */
+  targetTable?: string;
+}
+
+/** Par de columnas del ON de una relación: child.child = parent.parent. */
+export interface JoinPair {
+  child: string;
+  parent: string;
+}
+
+/**
+ * Condición extra del ON: tabla.columna = valor constante. El valor viaja SIEMPRE
+ * ligado ($N) en el backend; NUNCA se interpola. `table` es la hija o la padre de
+ * la relación.
+ */
+export interface JoinConstant {
+  table: string;
+  column: string;
+  value: string;
+}
+
+/** Tipo de JOIN soportado en v1. */
+export type JoinType = "inner" | "left";
+
+/**
+ * Relación FK DIRIGIDA entre dos tablas (multi-tabla). `childTable` posee la FK
+ * (se borra ANTES que `parentTable`); el orden de borrado hijo→padre se deriva
+ * de esta dirección.
+ */
+export interface Relationship {
+  childTable: string;
+  parentTable: string;
+  on: JoinPair[];
+  /** Condiciones constantes extra del ON (tabla.col = valor). Opcional. */
+  onConstants?: JoinConstant[];
+  joinType: JoinType;
+}
+
+/** Tabla foránea declarada en línea (multi-tabla): solo su nombre. */
+export interface ForeignTable {
+  table: string;
+}
+
+/** Origen de datos del módulo tal como lo devuelve el backend (sin secretos). */
+export interface DataSource {
+  sourceType: SourceType;
+  pgWhitelist?: Record<string, string[]>;
+  /** Plantilla de conexión que usa el módulo (connection-templates). */
+  connectionTemplateId: string;
+  /** Indica si hay valores variables guardados, sin revelar su valor. */
+  hasSecrets: boolean;
+}
+
+/**
+ * Valores VARIABLE en claro: SOLO para enviar al crear/editar. Un mapa ausente o
+ * vacío significa "sin cambios" en TODAS las claves (nunca "borrar").
+ */
+export interface ModuleSecrets {
+  variableValues?: Record<string, string>;
+}
+
+/**
+ * Condición fija de listado: solo se muestran las filas cuya columna `field`
+ * tiene un valor que coincide (exacto, sin distinguir mayúsculas) con alguno de
+ * `values`. Varias condiciones se combinan con AND. Se aplica en memoria en el
+ * backend tras traer los datos del origen, por lo que no depende de que la API
+ * soporte filtrar.
+ */
+export interface ListCondition {
+  field: string;
+  values: string[];
+  /**
+   * MULTI-TABLA: tabla de la columna `field` cuando es homónima entre tablas.
+   * Ausente ⇒ principal / única columna con ese nombre.
+   */
+  sourceTable?: string;
+}
+
+/** Definición completa de un módulo (lo que devuelve GET /module-defs/:slug). */
+export interface ModuleDefinition {
+  id?: string;
+  slug: string;
+  name: string;
+  sourceType: SourceType;
+  countryScope: CountryScope;
+  fetchMapping: Record<string, unknown>;
+  displayMapping: Record<string, unknown>;
+  listParams: Record<string, unknown>;
+  /** Condiciones fijas de listado (filtro en memoria por columna + valores). */
+  listConditions?: ListCondition[];
+  dataSource: DataSource;
+  /** Ruta jerárquica libre del módulo en el menú (organizativa, Req. 6). */
+  menuPath?: string;
+  actions: ModuleAction[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/** Cuerpo de creación/edición: la definición más las credenciales en claro. */
+export interface ModuleDefinitionInput extends ModuleDefinition {
+  secrets?: ModuleSecrets;
+}
+
+/** Forma mínima de un módulo visible para el sidebar (GET /modules). */
+export interface ModuleSummary {
+  slug: string;
+  name: string;
+  /** Ruta jerárquica libre para construir el árbol de menú (Req. 6). */
+  menuPath?: string;
+}
+
+/**
+ * Forma del display_mapping que el render dinámico entiende: una lista de
+ * columnas con su campo de origen, etiqueta, orden y formato opcional.
+ */
+export interface DisplayColumn {
+  field: string;
+  label: string;
+  order: number;
+  format?: string;
+  /** Se muestra como columna al listar. Ausente = true (compatibilidad). */
+  visible?: boolean;
+  /** Parte de la clave del WHERE de UPDATE/DELETE. Ausente = false. */
+  isPrimaryKey?: boolean;
+  /** Modificable (entra en el SET del UPDATE). Ausente = true salvo PK. */
+  editable?: boolean;
+  /**
+   * MULTI-TABLA: tabla a la que pertenece la columna. Ausente ⇒ principal
+   * (compatibilidad N=1). Junto con `field` desambigua columnas homónimas.
+   */
+  sourceTable?: string;
+}

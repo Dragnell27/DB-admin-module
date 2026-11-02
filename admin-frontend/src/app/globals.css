@@ -1,0 +1,172 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+  Tema oscuro del panel-admin-ott (Req. 1.2, 4.3).
+  Paleta: fondo azul casi negro, inputs ~#0f1220 con borde sutil y radio 8px,
+  texto principal blanco, texto secundario gris azulado,
+  botón primario claro con texto oscuro.
+  Tokens definidos como variables shadcn/ui, mapeadas a Tailwind v4 vía @theme inline.
+*/
+
+:root {
+  /* radio base 8px (Req. 1.2: inputs con radio de 8 píxeles) */
+  --radius: 0.5rem;
+
+  /*
+    Escala de superficies por ELEVACIÓN (modo oscuro: elevar = aclarar).
+    background (lienzo, lo más oscuro) < card (superficie base, "despega" del
+    fondo) < popover (superficie elevada: diálogos/menús). Mantiene el azul
+    oscuro, pero con pasos de luminancia perceptibles para dar jerarquía.
+  */
+  --background: #070a13;
+  --foreground: #f8fafc; /* texto principal blanco */
+
+  --card: #121829; /* superficie base, claramente por encima del fondo */
+  --card-foreground: #f8fafc;
+
+  --popover: #161d31; /* superficie elevada */
+  --popover-foreground: #f8fafc;
+
+  /* Botón primario claro con texto oscuro (Req. 1.2) */
+  --primary: #f1f5f9;
+  --primary-foreground: #0b0f1e;
+
+  --secondary: #1b2338;
+  --secondary-foreground: #e2e8f0;
+
+  /* Texto secundario gris azulado, subido para cumplir contraste AA. */
+  --muted: #1b2338;
+  --muted-foreground: #a9b4c7;
+
+  --accent: #222c45; /* +1 paso: hover/activo del sidebar se distingue mejor */
+  --accent-foreground: #f8fafc;
+
+  --destructive: #ef4444;
+  --destructive-foreground: #f8fafc;
+
+  /* Borde más visible que antes (#232a40) para separar secciones sin estridencia. */
+  --border: #2b344e;
+  --input: #141b2d;
+  --ring: #3b82f6;
+
+  /* Sombra sutil de apoyo para superficies elevadas (Card). */
+  --shadow-elevation: 0 1px 2px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.3);
+
+  /* Sidebar (Req. 4.3: misma paleta oscura, alineada a la nueva escala) */
+  --sidebar: #0b1120;
+  --sidebar-foreground: #e2e8f0;
+  --sidebar-primary: #f1f5f9;
+  --sidebar-primary-foreground: #0b0f1e;
+  --sidebar-accent: #222c45;
+  --sidebar-accent-foreground: #f8fafc;
+  --sidebar-border: #2b344e;
+  --sidebar-ring: #3b82f6;
+
+  /* Charts (reservado para métricas futuras) */
+  --chart-1: #3b82f6;
+  --chart-2: #22d3ee;
+  --chart-3: #a78bfa;
+  --chart-4: #34d399;
+  --chart-5: #f59e0b;
+}
+
+/*
+  El panel es siempre tema oscuro. Reafirmamos los mismos tokens bajo .dark
+  para que los componentes shadcn que dependan de la clase `dark` se vean idénticos.
+*/
+.dark {
+  --background: #070a13;
+  --foreground: #f8fafc;
+  --card: #121829;
+  --card-foreground: #f8fafc;
+  --popover: #161d31;
+  --popover-foreground: #f8fafc;
+  --primary: #f1f5f9;
+  --primary-foreground: #0b0f1e;
+  --secondary: #1b2338;
+  --secondary-foreground: #e2e8f0;
+  --muted: #1b2338;
+  --muted-foreground: #a9b4c7;
+  --accent: #222c45;
+  --accent-foreground: #f8fafc;
+  --destructive: #ef4444;
+  --destructive-foreground: #f8fafc;
+  --border: #2b344e;
+  --input: #141b2d;
+  --ring: #3b82f6;
+  --shadow-elevation: 0 1px 2px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.3);
+  --sidebar: #0b1120;
+  --sidebar-foreground: #e2e8f0;
+  --sidebar-primary: #f1f5f9;
+  --sidebar-primary-foreground: #0b0f1e;
+  --sidebar-accent: #222c45;
+  --sidebar-accent-foreground: #f8fafc;
+  --sidebar-border: #2b344e;
+  --sidebar-ring: #3b82f6;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+@layer utilities {
+  /*
+    Sombra de elevación sutil para superficies "elevadas" (Card, diálogos). En
+    modo oscuro la jerarquía la da sobre todo el color de superficie; esta sombra
+    es un apoyo discreto para despegar la tarjeta del fondo.
+  */
+  .shadow-elevation {
+    box-shadow: var(--shadow-elevation);
+  }
+}

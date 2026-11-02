@@ -1,0 +1,38 @@
+# Mantener liviano el contexto de build del admin-frontend.
+
+# Dependencias (se instalan dentro de la imagen con `npm ci`)
+node_modules
+
+# Artefactos de build de Next.js (se generan dentro de la imagen)
+.next
+out
+build
+
+# Control de versiones
+.git
+.gitignore
+
+# Secretos y configuración local
+.env
+.env.*
+!.env.example
+
+# Caches y metadatos de TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Pruebas y cobertura
+coverage
+**/*.test.ts
+**/*.test.tsx
+
+# Documentación y metadatos del editor
+*.md
+.vscode
+.idea
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
