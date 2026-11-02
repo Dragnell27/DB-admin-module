@@ -19,6 +19,7 @@ import { Loader2, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { CollapsibleRow } from "@/components/ui/collapsible-row";
 import { FeedbackBanner } from "@/components/feedback-banner";
 import { FormActionBar } from "@/components/form-action-bar";
 import { toast } from "@/lib/use-toast";
@@ -58,6 +59,20 @@ export interface EditorState {
 /** Estado vacío (creación). */
 export function emptyEditorState(): EditorState {
   return { name: "", fields: [] };
+}
+
+/**
+ * Resumen legible de un campo cuando está COLAPSADO: «<key> · <variable|fijo>»
+ * y, si tiene rol asignado, « · <role>». Función pura (unit-testeable). Solo se
+ * usa para presentación; no toca el modelo ni la serialización.
+ */
+export function fieldRowSummary(f: FieldRow): string {
+  const kindLabel = f.kind === "fixed" ? "fijo" : "variable";
+  const parts = [f.key, kindLabel];
+  if (f.role) {
+    parts.push(f.role);
+  }
+  return parts.join(" · ");
 }
 
 export interface TemplateEditorProps {
@@ -198,98 +213,15 @@ export function TemplateEditor({ initial, editId, usedByModules = 0, title }: Te
         ) : null}
 
         {state.fields.map((f, i) => (
-          <div key={i} className="grid gap-3 rounded-lg border border-border bg-card p-3 sm:grid-cols-2 lg:grid-cols-3">
-            <div className="space-y-1.5">
-              <Label htmlFor={`f_key_${i}`}>Clave</Label>
-              <Input
-                id={`f_key_${i}`}
-                value={f.key}
-                onChange={(e) => patchField(i, { key: e.target.value })}
-                placeholder="host"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor={`f_kind_${i}`}>Tipo</Label>
-              <select
-                id={`f_kind_${i}`}
-                className={inputClass}
-                value={f.kind}
-                onChange={(e) => patchField(i, { kind: e.target.value as FieldKind })}
-              >
-                <option value="fixed">Fijo</option>
-                <option value="variable">Variable</option>
-              </select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor={`f_role_${i}`}>Rol en el DSN</Label>
-              <select
-                id={`f_role_${i}`}
-                className={inputClass}
-                value={f.role}
-                onChange={(e) => patchField(i, { role: e.target.value as FieldRole })}
-              >
-                <option value="">(automático / option)</option>
-                {FIELD_ROLES.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {f.kind === "fixed" ? (
-              <div className="space-y-1.5">
-                <Label htmlFor={`f_fixed_${i}`}>
-                  Valor {isEdit ? "(vacío = sin cambios)" : ""}
-                </Label>
-                <Input
-                  id={`f_fixed_${i}`}
-                  type="password"
-                  value={f.fixedValue}
-                  onChange={(e) => patchField(i, { fixedValue: e.target.value })}
-                  autoComplete="off"
-                  placeholder={isEdit ? "••••••" : "valor"}
-                />
-              </div>
-            ) : (
-              <div className="space-y-1.5">
-                <Label htmlFor={`f_suggested_${i}`}>Valor sugerido (opcional)</Label>
-                <Input
-                  id={`f_suggested_${i}`}
-                  value={f.suggested}
-                  onChange={(e) => patchField(i, { suggested: e.target.value })}
-                  placeholder="(prellenado editable)"
-                />
-              </div>
-            )}
-
-            <div className="flex items-center justify-between sm:col-span-2 lg:col-span-3">
-              {f.kind === "variable" ? (
-                <label className="flex items-center gap-2 text-sm text-foreground">
-                  <input
-                    type="checkbox"
-                    checked={f.required}
-                    onChange={(e) => patchField(i, { required: e.target.checked })}
-                  />
-                  Obligatorio al crear el módulo
-                </label>
-              ) : (
-                <span className="text-xs text-muted-foreground">
-                  Los campos fijos son siempre obligatorios y se cifran.
-                </span>
-              )}
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => removeField(i)}
-                aria-label="Eliminar campo"
-              >
-                <Trash2 aria-hidden="true" />
-              </Button>
-            </div>
-          </div>
-          ))}
+          <FieldRowEditor
+            key={i}
+            index={i}
+            field={f}
+            isEdit={isEdit}
+            onPatch={(p) => patchField(i, p)}
+            onRemove={() => removeField(i)}
+          />
+        ))}
         </div>
       </div>
 
@@ -316,5 +248,140 @@ export function TemplateEditor({ initial, editId, usedByModules = 0, title }: Te
         </Button>
       </FormActionBar>
     </div>
+  );
+}
+
+/**
+ * Fila COLAPSABLE de un campo de la plantilla. Un campo con `key` NO vacía se
+ * muestra colapsado con un resumen («<key> · <variable|fijo>[ · <role>]») y se
+ * expande para editar sus controles; un campo NUEVO (key vacía) arranca
+ * EXPANDIDO para capturarlo de inmediato. El estado de colapso es LOCAL (no se
+ * persiste): se inicializa según la key y luego lo gobierna el usuario. El botón
+ * de eliminar vive en el encabezado de la fila (fuera del botón de toggle). No
+ * cambia el modelo de datos ni la serialización: es solo presentación.
+ */
+function FieldRowEditor({
+  index,
+  field: f,
+  isEdit,
+  onPatch,
+  onRemove,
+}: {
+  readonly index: number;
+  readonly field: FieldRow;
+  readonly isEdit: boolean;
+  readonly onPatch: (p: Partial<FieldRow>) => void;
+  readonly onRemove: () => void;
+}) {
+  const i = index;
+  // Nuevo (key vacía) ⇒ abierto; existente ⇒ colapsado.
+  const [open, setOpen] = React.useState(f.key.trim() === "");
+  const panelId = `f_panel_${i}`;
+  const titled = f.key.trim() !== "";
+
+  return (
+    <CollapsibleRow
+      panelId={panelId}
+      open={open}
+      onToggle={() => setOpen((v) => !v)}
+      header={
+        <span className="truncate text-sm font-medium text-foreground">
+          {titled ? fieldRowSummary(f) : "Campo nuevo"}
+        </span>
+      }
+      actions={
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onRemove}
+          aria-label="Eliminar campo"
+        >
+          <Trash2 aria-hidden="true" />
+        </Button>
+      }
+      panelClassName="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"
+    >
+      <div className="space-y-1.5">
+        <Label htmlFor={`f_key_${i}`}>Clave</Label>
+        <Input
+          id={`f_key_${i}`}
+          value={f.key}
+          onChange={(e) => onPatch({ key: e.target.value })}
+          placeholder="host"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor={`f_kind_${i}`}>Tipo</Label>
+        <select
+          id={`f_kind_${i}`}
+          className={inputClass}
+          value={f.kind}
+          onChange={(e) => onPatch({ kind: e.target.value as FieldKind })}
+        >
+          <option value="fixed">Fijo</option>
+          <option value="variable">Variable</option>
+        </select>
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor={`f_role_${i}`}>Rol en el DSN</Label>
+        <select
+          id={`f_role_${i}`}
+          className={inputClass}
+          value={f.role}
+          onChange={(e) => onPatch({ role: e.target.value as FieldRole })}
+        >
+          <option value="">(automático / option)</option>
+          {FIELD_ROLES.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {f.kind === "fixed" ? (
+        <div className="space-y-1.5">
+          <Label htmlFor={`f_fixed_${i}`}>
+            Valor {isEdit ? "(vacío = sin cambios)" : ""}
+          </Label>
+          <Input
+            id={`f_fixed_${i}`}
+            type="password"
+            value={f.fixedValue}
+            onChange={(e) => onPatch({ fixedValue: e.target.value })}
+            autoComplete="off"
+            placeholder={isEdit ? "••••••" : "valor"}
+          />
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          <Label htmlFor={`f_suggested_${i}`}>Valor sugerido (opcional)</Label>
+          <Input
+            id={`f_suggested_${i}`}
+            value={f.suggested}
+            onChange={(e) => onPatch({ suggested: e.target.value })}
+            placeholder="(prellenado editable)"
+          />
+        </div>
+      )}
+
+      <div className="flex items-center justify-between sm:col-span-2 lg:col-span-3">
+        {f.kind === "variable" ? (
+          <label className="flex items-center gap-2 text-sm text-foreground">
+            <input
+              type="checkbox"
+              checked={f.required}
+              onChange={(e) => onPatch({ required: e.target.checked })}
+            />
+            Obligatorio al crear el módulo
+          </label>
+        ) : (
+          <span className="text-xs text-muted-foreground">
+            Los campos fijos son siempre obligatorios y se cifran.
+          </span>
+        )}
+      </div>
+    </CollapsibleRow>
   );
 }
