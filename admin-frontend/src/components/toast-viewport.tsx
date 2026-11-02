@@ -22,6 +22,7 @@ import * as React from "react";
 import {
   AlertCircle,
   AlertTriangle,
+  ArrowRight,
   CheckCircle2,
   X,
   type LucideIcon,
@@ -36,14 +37,24 @@ import { useToast } from "@/lib/use-toast";
  * toasts se vean nativos (mismos tokens del tema oscuro, sin hex crudo).
  */
 const toneStyles: Readonly<Record<ToastTone, string>> = {
-  success: "border-emerald-500/50 bg-emerald-500/10 text-ok-text",
-  error: "border-destructive/50 bg-destructive/10 text-destructive",
-  warning: "border-amber-500/50 bg-amber-500/10 text-warn-text",
+  success: "border-l-emerald-500 border-emerald-500/50 bg-emerald-500/10 text-ok-text",
+  error: "border-l-destructive border-destructive/50 bg-destructive/10 text-destructive-text",
+  warning: "border-l-amber-500 border-amber-500/50 bg-amber-500/10 text-warn-text",
 };
 const toneIcons: Readonly<Record<ToastTone, LucideIcon>> = {
   success: CheckCircle2,
   error: AlertCircle,
   warning: AlertTriangle,
+};
+
+/**
+ * Título por tono cuando el toast no trae uno explícito. Se deriva en el
+ * viewport (no se materializa en el store) para no fijar copy en el estado.
+ */
+const DEFAULT_TITLE: Readonly<Record<ToastTone, string>> = {
+  success: "Guardado",
+  error: "No se pudo guardar",
+  warning: "Aviso",
 };
 
 /**
@@ -60,6 +71,7 @@ function ToastItem({
   readonly onDismiss: (id: string) => void;
 }) {
   const Icon = toneIcons[toast.tone];
+  const title = toast.title ?? DEFAULT_TITLE[toast.tone];
 
   React.useEffect(() => {
     const ms = AUTO_DISMISS_MS[toast.tone];
@@ -73,12 +85,25 @@ function ToastItem({
   return (
     <div
       className={cn(
-        "pointer-events-auto flex items-start gap-2 rounded-md border bg-card px-3 py-2 text-sm shadow-lg",
+        "pointer-events-auto flex items-start gap-2 rounded-md border border-l-4 bg-card px-3 py-2 text-sm shadow-lg",
         toneStyles[toast.tone],
       )}
     >
       <Icon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-      <span className="flex-1">{toast.message}</span>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold">{title}</p>
+        <p className="mt-0.5 text-sm text-muted-foreground">{toast.message}</p>
+        {toast.where ? (
+          <button
+            type="button"
+            onClick={toast.where.onClick}
+            className="mt-1.5 inline-flex items-center gap-1 text-xs font-semibold text-destructive-text"
+          >
+            <ArrowRight className="size-3.5" aria-hidden="true" />
+            Ir a «{toast.where.label}»
+          </button>
+        ) : null}
+      </div>
       <button
         type="button"
         onClick={() => onDismiss(toast.id)}

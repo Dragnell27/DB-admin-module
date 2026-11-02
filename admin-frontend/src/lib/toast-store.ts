@@ -23,10 +23,24 @@
 
 export type ToastTone = "success" | "error" | "warning";
 
+/**
+ * Entrada enriquecida de un toast. Permite un `title` opcional (si se omite, el
+ * viewport deriva uno por tono) y un enlace `where` opcional (CTA que lleva al
+ * origen del mensaje, p. ej. el campo con error). `message` sigue siendo el
+ * texto obligatorio; `addToast` acepta además un `string` por retrocompatibilidad.
+ */
+export interface ToastInput {
+  readonly title?: string;
+  readonly message: string;
+  readonly where?: { readonly label: string; readonly onClick: () => void };
+}
+
 export interface Toast {
   readonly id: string;
   readonly tone: ToastTone;
+  readonly title?: string;
   readonly message: string;
+  readonly where?: ToastInput["where"];
   readonly createdAt: number;
 }
 
@@ -114,17 +128,21 @@ export function pushCapped(
 }
 
 /**
- * Agrega un toast con el tono y mensaje dados y devuelve su id. Un mensaje
+ * Agrega un toast con el tono dado y devuelve su id. Acepta un `string` (solo
+ * mensaje) o un `ToastInput` con `title`/`where` opcionales. Un mensaje
  * vacío/undefined NO crea toast (degrada en silencio) y devuelve `""`.
  */
-export function addToast(tone: ToastTone, message: string): string {
-  if (!message) {
+export function addToast(tone: ToastTone, input: string | ToastInput): string {
+  const i = typeof input === "string" ? { message: input } : input;
+  if (!i.message) {
     return "";
   }
   const toast: Toast = {
     id: nextId(),
     tone,
-    message,
+    title: i.title,
+    message: i.message,
+    where: i.where,
     createdAt: Date.now(),
   };
   toasts = pushCapped(toasts, toast, TOAST_CAP);
@@ -157,9 +175,9 @@ export function clearToasts(): void {
  * toast directamente: `toast.error(mensaje)`.
  */
 export const toast = {
-  success: (m: string) => addToast("success", m),
-  error: (m: string) => addToast("error", m),
-  warning: (m: string) => addToast("warning", m),
+  success: (m: string | ToastInput) => addToast("success", m),
+  error: (m: string | ToastInput) => addToast("error", m),
+  warning: (m: string | ToastInput) => addToast("warning", m),
 };
 
 /**

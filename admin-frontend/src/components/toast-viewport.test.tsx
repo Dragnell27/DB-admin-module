@@ -34,14 +34,49 @@ describe("ToastViewport", () => {
   it("auto-descarta un toast de éxito tras 4000ms", () => {
     render(<ToastViewport />);
     act(() => {
-      toast.success("Guardado");
+      toast.success("Módulo guardado");
     });
-    expect(screen.getByText("Guardado")).toBeInTheDocument();
+    expect(screen.getByText("Módulo guardado")).toBeInTheDocument();
 
     act(() => {
       vi.advanceTimersByTime(4000);
     });
-    expect(screen.queryByText("Guardado")).not.toBeInTheDocument();
+    expect(screen.queryByText("Módulo guardado")).not.toBeInTheDocument();
+  });
+
+  it("renderiza título y descripción cuando el toast trae ambos", () => {
+    render(<ToastViewport />);
+    act(() => {
+      toast.success({ title: "Hecho", message: "Rol creado" });
+    });
+    expect(screen.getByText("Hecho")).toBeInTheDocument();
+    expect(screen.getByText("Rol creado")).toBeInTheDocument();
+  });
+
+  it("pinta el enlace 'Ir a …' solo cuando hay `where` y ejecuta su onClick", () => {
+    const onClick = vi.fn();
+    render(<ToastViewport />);
+    act(() => {
+      toast.error({
+        message: "Revisa el formulario",
+        where: { label: "Nombre", onClick },
+      });
+    });
+
+    const link = screen.getByRole("button", { name: "Ir a «Nombre»" });
+    expect(link).toBeInTheDocument();
+    fireEvent.click(link);
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("no pinta el enlace 'Ir a …' cuando el toast no trae `where`", () => {
+    render(<ToastViewport />);
+    act(() => {
+      toast.error("Sin enlace");
+    });
+    expect(
+      screen.queryByRole("button", { name: /^Ir a /u }),
+    ).not.toBeInTheDocument();
   });
 
   it("un toast de error PERSISTE y se cierra solo con el botón", () => {
