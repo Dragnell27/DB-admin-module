@@ -40,7 +40,7 @@ const PERMS_GT_NI = [
 function mockMeta(countries: string[], active: string): void {
   useCountriesMetaMock.mockReturnValue({
     data: { countries, active },
-  } as ReturnType<typeof useCountriesMeta>);
+  } as unknown as ReturnType<typeof useCountriesMeta>);
 }
 
 /** Provee un `QueryClientProvider` sin reintentos para el hook. */
