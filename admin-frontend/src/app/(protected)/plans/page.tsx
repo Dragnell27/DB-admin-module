@@ -19,6 +19,7 @@ import { isApiError, type ApiError } from "@/lib/api-client";
 import { planId, useDeletePlan, type Plan } from "@/features/plans/hooks";
 import { PlansTable } from "@/features/plans/components/plans-table";
 import { ConfirmDeleteDialog } from "@/features/plans/components/confirm-delete-dialog";
+import { usePageTitle } from "@/lib/page-chrome";
 import {
   FeedbackBanner,
   type FeedbackTone,
@@ -71,6 +72,7 @@ function PlansSuccessBanner() {
 }
 
 export default function PlansPage() {
+  usePageTitle("Plans");
   const router = useRouter();
   const [planToDelete, setPlanToDelete] = React.useState<Plan | null>(null);
   const [feedback, setFeedback] = React.useState<Feedback | null>(null);

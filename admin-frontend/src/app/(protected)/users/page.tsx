@@ -34,6 +34,7 @@ import { useUsers, type AdminUser } from "@/features/users/hooks";
 import { usePermissions } from "@/lib/use-permissions";
 import { can } from "@/lib/permissions";
 import { getCountry, subscribeCountry } from "@/lib/country";
+import { usePageTitle } from "@/lib/page-chrome";
 
 /** Lee el país seleccionado de forma reactiva y SSR-safe (igual que el selector). */
 function useSelectedCountry(): string | null {
@@ -77,6 +78,7 @@ function rolesLabel(user: AdminUser): string {
 }
 
 export default function UsersPage() {
+  usePageTitle("Usuarios");
   const perms = usePermissions();
   const country = useSelectedCountry() ?? "";
   const canCreate = can(perms, "users", "crear", country);
@@ -86,12 +88,9 @@ export default function UsersPage() {
   return (
     <div className="mx-auto w-full max-w-5xl space-y-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold text-foreground">Usuarios</h1>
-          <p className="text-sm text-muted-foreground">
-            Gestiona los usuarios del panel y los roles que tienen asignados.
-          </p>
-        </div>
+        <p className="text-sm text-muted-foreground">
+          Gestiona los usuarios del panel y los roles que tienen asignados.
+        </p>
         {canCreate ? (
           <Button asChild>
             <Link href="/users/new">

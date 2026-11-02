@@ -27,6 +27,7 @@ import {
   useConnectionTemplates,
   useDeleteConnectionTemplate,
 } from "@/features/connections/hooks";
+import { usePageTitle } from "@/lib/page-chrome";
 
 /**
  * Al volver del editor con `?saved=1`, dispara un TOAST de éxito (no un banner
@@ -54,19 +55,17 @@ function SavedToast() {
 }
 
 export default function ConnectionTemplatesPage() {
+  usePageTitle("Conexiones");
   const { data: templates, isLoading, isError, error } = useConnectionTemplates();
   const deleteMut = useDeleteConnectionTemplate();
   const [pendingDelete, setPendingDelete] = React.useState<string | null>(null);
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold text-foreground">Conexiones</h1>
-          <p className="text-sm text-muted-foreground">
-            Define plantillas de conexión reutilizables con campos fijos y variables.
-          </p>
-        </div>
+      <div className="flex items-center justify-between gap-4">
+        <p className="text-sm text-muted-foreground">
+          Define plantillas de conexión reutilizables con campos fijos y variables.
+        </p>
         <Button asChild>
           <Link href="/connection-templates/new">
             <Plus aria-hidden="true" />

@@ -223,12 +223,9 @@ export function PlansTable({ onCreate }: PlansTableProps) {
       <ScrollToTopButton onClick={scrollToTop} />
 
       <div className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold text-foreground">Plans</h1>
-          <p className="text-sm text-muted-foreground">
-            Gestiona los planes de suscripción disponibles.
-          </p>
-        </div>
+        <p className="text-sm text-muted-foreground">
+          Gestiona los planes de suscripción disponibles.
+        </p>
         <div className="flex items-center gap-2">
           <ReloadButton resource="plans" />
           {canCrear ? (

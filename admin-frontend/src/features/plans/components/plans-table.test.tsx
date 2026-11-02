@@ -2,7 +2,7 @@
 
 // Pruebas del botón flotante "Ir al inicio" en `PlansTable`.
 // Validan que:
-// - Se conserva el <h1>Plans</h1> interno.
+// - Se conserva la descripción de la vista (el título se movió a la topbar).
 // - Se renderiza el botón flotante "Ir al inicio".
 // - "Ir al inicio" invoca `scrollIntoView` sobre el ancla del tope.
 //
@@ -83,10 +83,12 @@ afterEach(() => {
 });
 
 describe("PlansTable — botón flotante Ir al inicio", () => {
-  it("conserva el <h1>Plans</h1> interno", () => {
+  it("conserva la descripción de la vista (el título vive ahora en la topbar)", () => {
+    // El <h1> «Plans» se movió a la topbar del panel (bloque «título en
+    // header»); la tabla conserva su descripción contextual.
     renderWithClient(<PlansTable onCreate={vi.fn()} />);
     expect(
-      screen.getByRole("heading", { level: 1, name: "Plans" }),
+      screen.getByText("Gestiona los planes de suscripción disponibles."),
     ).toBeInTheDocument();
   });
 

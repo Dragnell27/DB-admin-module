@@ -23,6 +23,7 @@ import { can } from "@/lib/permissions";
 import { usePermissions } from "@/lib/use-permissions";
 import { CustomersTable } from "@/features/customers/components/customers-table";
 import { FeedbackBanner } from "@/components/feedback-banner";
+import { usePageTitle } from "@/lib/page-chrome";
 
 /** Lee el país seleccionado de forma reactiva y SSR-safe (igual que el selector). */
 function useSelectedCountry(): string | null {
@@ -57,6 +58,7 @@ function CustomersSuccessBanner() {
 }
 
 export default function CustomersPage() {
+  usePageTitle("Customers");
   const perms = usePermissions();
   const country = useSelectedCountry() ?? "";
   // Visibilidad de controles de escritura según permiso en el país seleccionado
@@ -66,12 +68,9 @@ export default function CustomersPage() {
   return (
     <div className="mx-auto w-full max-w-5xl space-y-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold text-foreground">Customers</h1>
-          <p className="text-sm text-muted-foreground">
-            Lista, busca y gestiona los clientes de la plataforma.
-          </p>
-        </div>
+        <p className="text-sm text-muted-foreground">
+          Lista, busca y gestiona los clientes de la plataforma.
+        </p>
         <div className="flex items-center gap-2">
           <ReloadButton resource="customers" />
           {canCrear ? (

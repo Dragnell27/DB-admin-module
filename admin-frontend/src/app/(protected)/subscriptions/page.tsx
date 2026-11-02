@@ -31,6 +31,7 @@ import {
   type DetailKind,
 } from "@/components/detail-dialog";
 import { useRole } from "@/lib/use-role";
+import { usePageTitle } from "@/lib/page-chrome";
 import { SubscriptionsTable } from "@/features/subscriptions/components/subscriptions-table";
 
 const SUCCESS_CREATE = "Suscripción creada correctamente.";
@@ -85,6 +86,7 @@ function SubscriptionsSuccessBanner() {
 }
 
 export default function SubscriptionsPage() {
+  usePageTitle("Subscriptions");
   const role = useRole();
   const canWrite = role === "admin";
 
@@ -103,12 +105,9 @@ export default function SubscriptionsPage() {
 
   return (
     <div className="mx-auto w-full max-w-6xl space-y-6">
-      <div className="space-y-2">
-        <h1 className="text-2xl font-semibold text-foreground">Subscriptions</h1>
-        <p className="text-sm text-muted-foreground">
-          Lista, filtra y gestiona las suscripciones de los clientes.
-        </p>
-      </div>
+      <p className="text-sm text-muted-foreground">
+        Lista, filtra y gestiona las suscripciones de los clientes.
+      </p>
 
       {/* Banner de éxito por flags de query (Req. 7.4) */}
       <React.Suspense fallback={null}>

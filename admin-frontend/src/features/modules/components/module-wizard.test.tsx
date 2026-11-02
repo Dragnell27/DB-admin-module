@@ -9,10 +9,11 @@
 //     existente (equivalencia de payload con la versión previa del stepper).
 
 import "@testing-library/jest-dom/vitest";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 
 import { defaultColumn, emptyWizardState, toDefinitionInput, type WizardState } from "@/features/modules/schema";
+import { HEADER_ACTIONS_SLOT_ID, getPageTitle, setPageTitle } from "@/lib/page-chrome";
 
 // --- Mocks de dependencias del componente -----------------------------------
 
@@ -40,8 +41,22 @@ vi.mock("@/features/connections/hooks", () => ({
 
 import { ModuleWizard } from "@/features/modules/components/module-wizard";
 
+// La topbar del panel expone un slot (`HEADER_ACTIONS_SLOT_ID`) donde el
+// asistente PORTEA sus botones Guardar/Cancelar (bloque «botones arriba»). En
+// la app ese slot vive en `AppHeader`, que aquí no se monta; se simula creando
+// el contenedor en `document.body` antes de cada render. Las aserciones buscan
+// los botones en el documento (no en el contenedor del asistente).
+beforeEach(() => {
+  const slot = document.createElement("div");
+  slot.id = HEADER_ACTIONS_SLOT_ID;
+  document.body.appendChild(slot);
+});
+
 afterEach(() => {
   cleanup();
+  document.getElementById(HEADER_ACTIONS_SLOT_ID)?.remove();
+  // El título es un store en memoria: se limpia para no filtrar entre pruebas.
+  setPageTitle(null);
   vi.clearAllMocks();
 });
 
@@ -135,19 +150,23 @@ describe("ModuleWizard — rediseño de secciones (fase 1)", () => {
     expect(updateMutate.mock.calls[0][0]).toEqual(toDefinitionInput(initial));
   });
 
-  it("renderiza las tres zonas (cabecera + cuerpo + pie) en el primer montaje", () => {
+  it("declara el título en el store de la topbar y portea la acción de guardar", () => {
     render(<ModuleWizard initial={validEditState()} editSlug="facturas" title="Editar módulo · Facturas" />);
 
-    // CABECERA: título dinámico + barra de secciones.
-    expect(
-      screen.getByRole("heading", { name: "Editar módulo · Facturas" }),
-    ).toBeInTheDocument();
+    // TÍTULO: ya no se pinta un <h1> en el cuerpo del asistente; se publica en
+    // el store que la topbar del panel renderiza.
+    expect(getPageTitle()).toBe("Editar módulo · Facturas");
+
+    // Las pestañas de secciones siguen en la cabecera del asistente.
     expect(
       screen.getByRole("navigation", { name: "Secciones del asistente" }),
     ).toBeInTheDocument();
 
-    // PIE: la acción primaria de guardar SIEMPRE visible desde el primer montaje.
-    expect(screen.getByRole("button", { name: "Guardar cambios" })).toBeInTheDocument();
+    // La acción primaria de guardar está PORTEADA al slot de la topbar y es
+    // visible desde el primer montaje (se busca en el documento).
+    const slot = document.getElementById(HEADER_ACTIONS_SLOT_ID)!;
+    expect(within(slot).getByRole("button", { name: "Guardar cambios" })).toBeInTheDocument();
+    expect(within(slot).getByRole("button", { name: "Cancelar" })).toBeInTheDocument();
   });
 
   it("al guardar con una sección inválida indica cuál corregir y no llama a la mutación", () => {

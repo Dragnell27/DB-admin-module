@@ -24,15 +24,16 @@
  * seguridad real la aplica el backend.
  */
 import * as React from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, Circle, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { FeedbackBanner } from "@/components/feedback-banner";
-import { FormActionBar } from "@/components/form-action-bar";
 import { cn } from "@/lib/utils";
 import { toast } from "@/lib/use-toast";
+import { usePageTitle, useHeaderActionsSlot } from "@/lib/page-chrome";
 import type { ApiError } from "@/lib/api-client";
 import {
   useCreateModuleDef,
@@ -111,6 +112,11 @@ export interface ModuleWizardProps {
 
 export function ModuleWizard({ initial, editSlug, title }: ModuleWizardProps) {
   const router = useRouter();
+  // El título de la vista se declara en la TOPBAR (bloque «título en header»):
+  // la topbar renderiza el único <h1>; el asistente ya no lo pinta en el cuerpo.
+  usePageTitle(title ?? null);
+  // Slot de la topbar donde se portean las acciones Guardar/Cancelar.
+  const headerSlot = useHeaderActionsSlot();
   const [state, setState] = React.useState<WizardState>(
     initial ?? emptyWizardState(),
   );
@@ -268,12 +274,41 @@ export function ModuleWizard({ initial, editSlug, title }: ModuleWizardProps) {
     // cabecera y el pie nunca se desplazan respecto al nav lateral de la app y
     // el scroll vive SOLO en el cuerpo.
     <div className="flex h-full min-h-0 flex-col">
-      {/* CABECERA no desplazable: título dinámico + pestañas de secciones. */}
-      <div className="shrink-0">
-        {title ? (
-          <h1 className="mb-3 text-2xl font-semibold text-foreground">{title}</h1>
-        ) : null}
+      {/* Acciones Guardar/Cancelar PORTEADAS a la topbar (bloque «botones
+          arriba»): siempre visibles, conservan sus handlers, labels, spinner y
+          estado `disabled`. Si el slot aún no existe (SSR / primer render) no se
+          portea; un efecto re-renderiza al resolverlo. */}
+      {headerSlot
+        ? createPortal(
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => router.push("/module-defs")}
+              >
+                Cancelar
+              </Button>
+              <Button type="button" size="sm" onClick={save} disabled={mut.isPending}>
+                {mut.isPending ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                    Guardando...
+                  </>
+                ) : isEdit ? (
+                  "Guardar cambios"
+                ) : (
+                  "Crear módulo"
+                )}
+              </Button>
+            </>,
+            headerSlot,
+          )
+        : null}
 
+      {/* CABECERA no desplazable: pestañas de secciones (el título vive en la
+          topbar del panel, no aquí). */}
+      <div className="shrink-0">
         {/* Barra de secciones HORIZONTAL: pestañas con navegación libre e
             indicador de estado por sección. Antes era una columna lateral que
             robaba ancho; ahora el área de trabajo ocupa todo el ancho. Ya NO
@@ -335,6 +370,16 @@ export function ModuleWizard({ initial, editSlug, title }: ModuleWizardProps) {
             GUARDAR, en cambio, ahora es un toast flotante. */}
         {activeError ? <FeedbackBanner tone="error" message={activeError} /> : null}
 
+        {/* Aviso de sección inválida al intentar guardar. Antes vivía en el pie
+            (FormActionBar); al mover los botones a la topbar, el aviso se queda
+            junto al cuerpo donde el usuario está trabajando. */}
+        {saveAttempted && firstInvalidTitle ? (
+          <FeedbackBanner
+            tone="error"
+            message={`Revisa la sección «${firstInvalidTitle}» para poder guardar.`}
+          />
+        ) : null}
+
         <Card>
           <CardContent className="space-y-4 pt-6">
             {active === "origin" ? (
@@ -353,37 +398,6 @@ export function ModuleWizard({ initial, editSlug, title }: ModuleWizardProps) {
         </Card>
       </div>
 
-      {/* PIE no desplazable: barra de acciones SIEMPRE visible (FormActionBar
-          compartido en modo estructural `sticky={false}`), último hijo flex del
-          layout de tres zonas. La acción primaria usa el Button primario del
-          sistema de diseño; valida todas las secciones y, si falla, indica cuál
-          corregir vía `hint`. */}
-      <FormActionBar
-        sticky={false}
-        hint={
-          saveAttempted && firstInvalidTitle ? (
-            <span className="text-destructive">
-              Revisa la sección «{firstInvalidTitle}» para poder guardar.
-            </span>
-          ) : null
-        }
-      >
-        <Button type="button" variant="outline" onClick={() => router.push("/module-defs")}>
-          Cancelar
-        </Button>
-        <Button type="button" onClick={save} disabled={mut.isPending}>
-          {mut.isPending ? (
-            <>
-              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-              Guardando...
-            </>
-          ) : isEdit ? (
-            "Guardar cambios"
-          ) : (
-            "Crear módulo"
-          )}
-        </Button>
-      </FormActionBar>
     </div>
   );
 }

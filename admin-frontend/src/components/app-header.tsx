@@ -15,12 +15,15 @@
  * `storage` para reflejar login/logout en otras pestañas.
  */
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { usePathname } from "next/navigation";
 import { PanelLeft } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { LogoutButton } from "@/components/logout-button";
 import { CountrySelector } from "@/components/country-selector";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { showsCountrySelector } from "@/lib/ott-routes";
+import { usePageTitleValue, HEADER_ACTIONS_SLOT_ID } from "@/lib/page-chrome";
 import {
   getCollapsed,
   subscribeCollapsed,
@@ -80,13 +83,19 @@ export function AppHeader() {
     () => false,
   );
 
+  // Título contextual de la vista activa: lo declara cada página con
+  // `usePageTitle(...)` y aquí se pinta como el ÚNICO <h1> de la vista.
+  const pageTitle = usePageTitleValue();
+
+  // El selector de país SOLO aplica a los recursos OTT por país. La ruta decide.
+  const pathname = usePathname();
+  const showCountry = showsCountrySelector(pathname);
+
   return (
-    <header className="flex h-16 shrink-0 items-center justify-between border-b border-border bg-card px-6">
-      {/* Selector de país: envuelto en un contenedor que SIEMPRE ocupa el lado
-          izquierdo, aunque el selector no renderice opciones (sin permisos o
-          cargando). Así el bloque de usuario queda fijo a la derecha. El botón
-          de contraer/expandir el menú precede al selector. */}
-      <div className="flex items-center gap-2">
+    <header className="flex h-16 shrink-0 items-center justify-between gap-4 border-b border-border bg-card px-6">
+      {/* Lado izquierdo: botón de contraer/expandir el menú y el TÍTULO de la
+          vista activa (ocupa el espacio que antes gastaba el cuerpo). */}
+      <div className="flex min-w-0 items-center gap-3">
         <Button
           type="button"
           variant="ghost"
@@ -97,10 +106,21 @@ export function AppHeader() {
         >
           <PanelLeft className="size-4" aria-hidden="true" />
         </Button>
-        <CountrySelector />
+        {pageTitle ? (
+          <h1 className="truncate text-lg font-semibold text-foreground">
+            {pageTitle}
+          </h1>
+        ) : null}
       </div>
 
       <div className="flex items-center gap-4">
+        {/* Slot de ACCIONES de la vista (p. ej. Guardar/Cancelar del constructor
+            de módulos). Las vistas portean aquí sus botones; vacío no ocupa. */}
+        <div id={HEADER_ACTIONS_SLOT_ID} className="flex items-center gap-2" />
+
+        {/* Selector de país: solo en recursos OTT por país. */}
+        {showCountry ? <CountrySelector /> : null}
+
         <ThemeToggle />
 
         {user?.username ? (

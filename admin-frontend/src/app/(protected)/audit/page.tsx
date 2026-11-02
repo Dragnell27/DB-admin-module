@@ -19,6 +19,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { getCountry, subscribeCountry } from "@/lib/country";
 import { can } from "@/lib/permissions";
 import { usePermissions } from "@/lib/use-permissions";
+import { usePageTitle } from "@/lib/page-chrome";
 import { AuditTable } from "@/features/audit/components/audit-table";
 
 /** Lee el país seleccionado de forma reactiva y SSR-safe (igual que el selector). */
@@ -31,19 +32,17 @@ function useSelectedCountry(): string | null {
 }
 
 export default function AuditPage() {
+  usePageTitle("Auditoría");
   const perms = usePermissions();
   const country = useSelectedCountry() ?? "";
   const canVer = can(perms, "audit", "ver", country);
 
   return (
     <div className="mx-auto w-full max-w-6xl space-y-6">
-      <div className="space-y-1">
-        <h1 className="text-2xl font-semibold text-foreground">Auditoría</h1>
-        <p className="text-sm text-muted-foreground">
-          Consulta el historial de creaciones, ediciones y eliminaciones del
-          panel. Filtra por el id de cada objeto para seguir su rastro.
-        </p>
-      </div>
+      <p className="text-sm text-muted-foreground">
+        Consulta el historial de creaciones, ediciones y eliminaciones del
+        panel. Filtra por el id de cada objeto para seguir su rastro.
+      </p>
 
       {canVer ? (
         <AuditTable />

@@ -35,6 +35,7 @@ import { FeedbackBanner } from "@/components/feedback-banner";
 import { getCountry, subscribeCountry } from "@/lib/country";
 import { can } from "@/lib/permissions";
 import { usePermissions } from "@/lib/use-permissions";
+import { usePageTitle } from "@/lib/page-chrome";
 import type { CardCustomerSelector } from "@/features/cards/hooks";
 
 import { CardsTable } from "./components/cards-table";
@@ -81,6 +82,7 @@ function CardsCreatedBanner() {
 }
 
 export default function CardsPage() {
+  usePageTitle("Cards");
   const router = useRouter();
   const perms = usePermissions();
   const country = useSelectedCountry() ?? "";
@@ -144,12 +146,9 @@ export default function CardsPage() {
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-6">
-      <div className="space-y-1">
-        <h1 className="text-2xl font-semibold text-foreground">Cards</h1>
-        <p className="text-sm text-muted-foreground">
-          Selecciona un cliente para revisar y administrar sus medios de pago.
-        </p>
-      </div>
+      <p className="text-sm text-muted-foreground">
+        Selecciona un cliente para revisar y administrar sus medios de pago.
+      </p>
 
       {/* Selector de cliente (Req. 17.1, 17.2) */}
       <Card>

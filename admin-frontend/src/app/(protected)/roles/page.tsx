@@ -34,6 +34,7 @@ import { getCountry, subscribeCountry } from "@/lib/country";
 import { usePermissions } from "@/lib/use-permissions";
 import { can } from "@/lib/permissions";
 import { useRoles, useDeleteRole, type Role } from "@/features/roles/hooks";
+import { usePageTitle } from "@/lib/page-chrome";
 
 /** Lee de forma reactiva (y SSR-safe) el país seleccionado en el selector. */
 function useSelectedCountry(): string {
@@ -71,6 +72,7 @@ function RolesSuccessToast() {
 }
 
 export default function RolesPage() {
+  usePageTitle("Roles");
   const perms = usePermissions();
   const country = useSelectedCountry();
   const canCreate = can(perms, "roles", "crear", country);
@@ -112,12 +114,9 @@ export default function RolesPage() {
   return (
     <div className="mx-auto w-full max-w-5xl space-y-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold text-foreground">Roles</h1>
-          <p className="text-sm text-muted-foreground">
-            Define roles y los permisos recurso × acción por país.
-          </p>
-        </div>
+        <p className="text-sm text-muted-foreground">
+          Define roles y los permisos recurso × acción por país.
+        </p>
         {canCreate ? (
           <Button asChild>
             <Link href="/roles/new">

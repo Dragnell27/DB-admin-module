@@ -26,6 +26,7 @@ import {
   useDeleteModuleDef,
   useModuleDefs,
 } from "@/features/modules/hooks";
+import { usePageTitle } from "@/lib/page-chrome";
 
 /**
  * Al volver del asistente con `?saved=1`, dispara un TOAST de éxito (no un
@@ -53,19 +54,17 @@ function SavedToast() {
 }
 
 export default function ModuleDefsPage() {
+  usePageTitle("Módulos");
   const { data: defs, isLoading, isError, error } = useModuleDefs();
   const deleteMut = useDeleteModuleDef();
   const [pendingDelete, setPendingDelete] = React.useState<string | null>(null);
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold text-foreground">Módulos</h1>
-          <p className="text-sm text-muted-foreground">
-            Define módulos administrables conectados a una API o a PostgreSQL.
-          </p>
-        </div>
+      <div className="flex items-center justify-between gap-4">
+        <p className="text-sm text-muted-foreground">
+          Define módulos administrables conectados a una API o a PostgreSQL.
+        </p>
         <Button asChild>
           <Link href="/module-defs/new">
             <Plus aria-hidden="true" />
