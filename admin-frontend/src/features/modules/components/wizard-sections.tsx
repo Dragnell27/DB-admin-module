@@ -16,7 +16,7 @@
  * invariante «Llave primaria ⇒ Editable off» se conserva exactamente.
  */
 import * as React from "react";
-import { ChevronDown, Loader2, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, Loader2, Plus, Search, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -837,111 +837,313 @@ export function ColumnsSection({ state, patch }: SectionProps) {
     patch({ columns: copy });
   };
 
+  // Cada columna conserva su ÍNDICE GLOBAL en state.columns (el que consume
+  // updateColumn). Al agrupar por tabla y filtrar por búsqueda se arrastra ese
+  // índice para no romper la edición.
+  const indexed = state.columns.map((col, index) => ({ col, index }));
+
+  // Agrupa por tabla de origen PRESERVANDO el orden de primera aparición de
+  // cada tabla (que ya viene principal-primero desde la sincronización). La
+  // tabla efectiva de una columna sin sourceTable es la principal.
+  const groups = React.useMemo(() => {
+    const order: string[] = [];
+    const byTable = new Map<string, { col: ColumnFormState; index: number }[]>();
+    for (const item of indexed) {
+      const table = item.col.sourceTable || state.pgTable || "";
+      if (!byTable.has(table)) {
+        byTable.set(table, []);
+        order.push(table);
+      }
+      byTable.get(table)!.push(item);
+    }
+    return order.map((table) => ({ table, items: byTable.get(table)! }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.columns, state.pgTable]);
+
+  // Buscador por nombre de columna (campo o etiqueta, sin distinguir acentos no;
+  // simple contains en minúsculas).
+  const [query, setQuery] = React.useState("");
+  const q = query.trim().toLowerCase();
+  const matches = React.useCallback(
+    (col: ColumnFormState) =>
+      q === "" ||
+      col.field.toLowerCase().includes(q) ||
+      col.label.toLowerCase().includes(q),
+    [q],
+  );
+
+  // Estado de expansión por tabla. Default: principal abierta, foráneas
+  // colapsadas. `null` = aún sin override del usuario (usa el default).
+  const [openByTable, setOpenByTable] = React.useState<Record<string, boolean>>({});
+  const isOpen = (table: string) =>
+    openByTable[table] ?? table === state.pgTable;
+  const toggleTable = (table: string) =>
+    setOpenByTable((prev) => ({ ...prev, [table]: !isOpen(table) }));
+  const setAll = (open: boolean) =>
+    setOpenByTable(Object.fromEntries(groups.map((g) => [g.table, open])));
+
+  const renderCard = (col: ColumnFormState, i: number) => (
+    <ColumnCard
+      key={col.field || i}
+      col={col}
+      index={i}
+      // Dentro de un grupo el "Campo" muestra solo el nombre de columna; en
+      // módulos de una tabla no hay grupo, así que también va sin prefijo.
+      fieldDisplay={col.field}
+      onUpdate={updateColumn}
+    />
+  );
+
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <p className="text-xs text-muted-foreground">
         Derivadas de la lista blanca de «Tablas y relaciones». Edita etiqueta,
         orden y formato; marca visible, llave primaria o editable.
       </p>
-      {state.columns.map((col, i) => {
-        const fieldLabel =
-          multiTable && col.sourceTable ? `${col.sourceTable}.${col.field}` : col.field;
-        // Las columnas no visibles se ATENÚAN (quedan presentes y editables).
-        const attenuated = !col.visible;
-        return (
-          <div
-            key={col.field || i}
-            className={`space-y-2 rounded-md border border-border/60 p-2.5 transition-opacity ${
-              attenuated ? "opacity-60" : ""
-            }`}
-          >
-            {/* Fila 1: metadatos de la columna (campo, etiqueta, orden, formato).
-                Ocupa TODO el ancho del contenedor; los toggles van debajo (fila
-                2 apilada), no a la derecha. */}
-            <div className="grid w-full items-end gap-2 sm:grid-cols-[1fr_1fr_70px_1fr]">
-              <div className="space-y-1">
-                <Label>Campo</Label>
-                <Input value={fieldLabel} readOnly disabled />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor={`w_col_label_${i}`}>Etiqueta</Label>
-                <Input
-                  id={`w_col_label_${i}`}
-                  value={col.label}
-                  onChange={(e) => updateColumn(i, { label: e.target.value })}
-                  placeholder="Monto"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor={`w_col_order_${i}`}>Orden</Label>
-                <Input
-                  id={`w_col_order_${i}`}
-                  type="number"
-                  value={col.order}
-                  onChange={(e) => updateColumn(i, { order: Number(e.target.value) })}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor={`w_col_format_${i}`}>Formato</Label>
-                <select
-                  id={`w_col_format_${i}`}
-                  className={inputClass}
-                  value={col.format}
-                  onChange={(e) => updateColumn(i, { format: e.target.value })}
-                >
-                  <option value="">Texto</option>
-                  <option value="date">Fecha</option>
-                  <option value="datetime">Fecha y hora</option>
-                </select>
-              </div>
-            </div>
-            {/* Fila 2: toggles Visible / Llave primaria / Editable como SWITCHES
-                con color semántico, SIEMPRE debajo de los metadatos. Se conserva
-                la invariante PK ⇒ Editable off (y Editable deshabilitado
-                mientras la columna sea PK). */}
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-              <SwitchField
-                id={`w_col_visible_${i}`}
-                label="Visible"
-                title="Visible al listar"
-                tone="primary"
-                checked={col.visible}
-                onCheckedChange={(v) => updateColumn(i, { visible: v })}
-              />
-              <SwitchField
-                id={`w_col_pk_${i}`}
-                label="Llave primaria"
-                title="Llave primaria (WHERE)"
-                tone="accent"
-                checked={col.isPrimaryKey}
-                onCheckedChange={(v) => updateColumn(i, { isPrimaryKey: v })}
-              />
-              <SwitchField
-                id={`w_col_editable_${i}`}
-                label="Editable"
-                title="Editable (SET del UPDATE)"
-                tone="primary"
-                checked={col.editable}
-                disabled={col.isPrimaryKey}
-                onCheckedChange={(v) => updateColumn(i, { editable: v })}
-              />
-            </div>
-            {/* Fuente de valores (lista estática/dinámica) de la columna. */}
-            <ColumnValueSourceEditor
-              vs={col.valueSource}
-              onChange={(next) => updateColumn(i, { valueSource: next })}
-            />
-          </div>
-        );
-      })}
+
       {state.columns.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           Aún no hay columnas. Declara columnas en la lista blanca de «Tablas y
           relaciones».
         </p>
-      ) : null}
+      ) : (
+        <>
+          {/* Barra de herramientas: buscador por nombre + expandir/colapsar todo
+              (estos dos solo tienen sentido con grupos, es decir, multi-tabla). */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative min-w-[14rem] flex-1">
+              <Search
+                className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                aria-hidden="true"
+              />
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Buscar columna por nombre"
+                aria-label="Buscar columna por nombre"
+                className="pl-9"
+              />
+            </div>
+            {multiTable ? (
+              <div className="flex items-center gap-2">
+                <Button type="button" variant="outline" size="sm" onClick={() => setAll(true)}>
+                  Expandir todo
+                </Button>
+                <Button type="button" variant="outline" size="sm" onClick={() => setAll(false)}>
+                  Colapsar todo
+                </Button>
+              </div>
+            ) : null}
+          </div>
+
+          {/* N=1 (una sola tabla): render PLANO sin encabezado de grupo. */}
+          {!multiTable ? (
+            <div className="space-y-2">
+              {indexed
+                .filter(({ col }) => matches(col))
+                .map(({ col, index }) => renderCard(col, index))}
+              {indexed.every(({ col }) => !matches(col)) ? (
+                <p className="text-sm text-muted-foreground">
+                  Ninguna columna coincide con «{query}».
+                </p>
+              ) : null}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {groups.map((group) => (
+                <ColumnTableGroup
+                  key={group.table}
+                  table={group.table}
+                  isPrincipal={group.table === state.pgTable}
+                  items={group.items}
+                  matches={matches}
+                  open={isOpen(group.table)}
+                  onToggle={() => toggleTable(group.table)}
+                  renderCard={renderCard}
+                  query={query}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      )}
 
       <ConditionsEditor state={state} patch={patch} />
+    </div>
+  );
+}
+
+/**
+ * Grupo colapsable (accordion) de las columnas de UNA tabla en multi-tabla. El
+ * encabezado muestra el nombre de la tabla (mono), si es principal/foránea y
+ * pills de resumen («N columnas», «N PK»). El cuerpo contiene las tarjetas de
+ * columna. Si la búsqueda está activa, el grupo se fuerza ABIERTO cuando tiene
+ * coincidencias y se OCULTA cuando no tiene ninguna, para que el buscador sea
+ * útil sin tener que expandir a mano.
+ */
+function ColumnTableGroup({
+  table,
+  isPrincipal,
+  items,
+  matches,
+  open,
+  onToggle,
+  renderCard,
+  query,
+}: {
+  readonly table: string;
+  readonly isPrincipal: boolean;
+  readonly items: { col: ColumnFormState; index: number }[];
+  readonly matches: (col: ColumnFormState) => boolean;
+  readonly open: boolean;
+  readonly onToggle: () => void;
+  readonly renderCard: (col: ColumnFormState, index: number) => React.ReactNode;
+  readonly query: string;
+}) {
+  const searching = query.trim() !== "";
+  const visibleItems = items.filter(({ col }) => matches(col));
+  // Con búsqueda activa, oculta grupos sin coincidencias y abre los que sí.
+  if (searching && visibleItems.length === 0) {
+    return null;
+  }
+  const expanded = searching ? true : open;
+  const pkCount = items.filter(({ col }) => col.isPrimaryKey).length;
+  const panelId = `w_col_group_${table}`;
+
+  return (
+    <div className="rounded-lg border border-border bg-card shadow-elevation">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={expanded}
+        aria-controls={panelId}
+        className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-accent-hover disabled:cursor-default"
+        disabled={searching}
+      >
+        <ChevronDown
+          className={`size-4 shrink-0 text-muted-foreground transition-transform ${expanded ? "" : "-rotate-90"}`}
+          aria-hidden="true"
+        />
+        <span className="font-mono text-sm font-medium text-foreground">{table}</span>
+        <span className="rounded-full border border-border-soft bg-secondary px-2 py-0.5 text-xs text-secondary-foreground">
+          {isPrincipal ? "Principal" : "Foránea"}
+        </span>
+        <span className="ml-auto flex items-center gap-2">
+          <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+            {items.length} {items.length === 1 ? "columna" : "columnas"}
+          </span>
+          {pkCount > 0 ? (
+            <span className="rounded-full px-2 py-0.5 text-xs font-medium text-[var(--chart-3)]">
+              {pkCount} PK
+            </span>
+          ) : null}
+        </span>
+      </button>
+      {expanded ? (
+        <div id={panelId} className="space-y-2 border-t border-border-soft p-2.5">
+          {visibleItems.map(({ col, index }) => renderCard(col, index))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Tarjeta de edición de UNA columna: metadatos (campo, etiqueta, orden, formato)
+ * en la fila superior y los switches Visible / Llave primaria / Editable debajo,
+ * más el editor de Fuente de valores. Conserva la invariante PK ⇒ Editable off
+ * (y Editable deshabilitado mientras sea PK). `index` es el índice GLOBAL en
+ * state.columns que consume `onUpdate`. `fieldDisplay` es lo que se muestra en
+ * "Campo" (dentro de un grupo, solo el nombre de la columna, sin prefijo tabla).
+ */
+function ColumnCard({
+  col,
+  index,
+  fieldDisplay,
+  onUpdate,
+}: {
+  readonly col: ColumnFormState;
+  readonly index: number;
+  readonly fieldDisplay: string;
+  readonly onUpdate: (i: number, p: Partial<ColumnFormState>) => void;
+}) {
+  const i = index;
+  // Las columnas no visibles se ATENÚAN (quedan presentes y editables).
+  const attenuated = !col.visible;
+  return (
+    <div
+      className={`space-y-2 rounded-md border border-border/60 bg-background p-2.5 transition-opacity ${
+        attenuated ? "opacity-60" : ""
+      }`}
+    >
+      <div className="grid w-full items-end gap-2 sm:grid-cols-[1fr_1fr_70px_1fr]">
+        <div className="space-y-1">
+          <Label>Campo</Label>
+          <Input value={fieldDisplay} readOnly disabled />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor={`w_col_label_${i}`}>Etiqueta</Label>
+          <Input
+            id={`w_col_label_${i}`}
+            value={col.label}
+            onChange={(e) => onUpdate(i, { label: e.target.value })}
+            placeholder="Monto"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor={`w_col_order_${i}`}>Orden</Label>
+          <Input
+            id={`w_col_order_${i}`}
+            type="number"
+            value={col.order}
+            onChange={(e) => onUpdate(i, { order: Number(e.target.value) })}
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor={`w_col_format_${i}`}>Formato</Label>
+          <select
+            id={`w_col_format_${i}`}
+            className={inputClass}
+            value={col.format}
+            onChange={(e) => onUpdate(i, { format: e.target.value })}
+          >
+            <option value="">Texto</option>
+            <option value="date">Fecha</option>
+            <option value="datetime">Fecha y hora</option>
+          </select>
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+        <SwitchField
+          id={`w_col_visible_${i}`}
+          label="Visible"
+          title="Visible al listar"
+          tone="primary"
+          checked={col.visible}
+          onCheckedChange={(v) => onUpdate(i, { visible: v })}
+        />
+        <SwitchField
+          id={`w_col_pk_${i}`}
+          label="Llave primaria"
+          title="Llave primaria (WHERE)"
+          tone="accent"
+          checked={col.isPrimaryKey}
+          onCheckedChange={(v) => onUpdate(i, { isPrimaryKey: v })}
+        />
+        <SwitchField
+          id={`w_col_editable_${i}`}
+          label="Editable"
+          title="Editable (SET del UPDATE)"
+          tone="primary"
+          checked={col.editable}
+          disabled={col.isPrimaryKey}
+          onCheckedChange={(v) => onUpdate(i, { editable: v })}
+        />
+      </div>
+      <ColumnValueSourceEditor
+        vs={col.valueSource}
+        onChange={(next) => onUpdate(i, { valueSource: next })}
+      />
     </div>
   );
 }
