@@ -277,10 +277,27 @@ func (h *ModulesHandler) FieldOptions(c *gin.Context) {
 		return
 	}
 
-	field, ok := findDynamicField(def.Actions, c.Param("field"), c.Query("action"))
-	if !ok {
-		writeError(c, http.StatusNotFound, "E404", "Campo dinámico no encontrado en el módulo")
-		return
+	// La fuente dinámica a resolver proviene de una COLUMNA (?column=true) o, en
+	// la ruta histórica, de un campo de ACCIÓN. Con ?column=true manda la columna
+	// (precedencia columna>acción): se resuelve su valueSource.dynamic desde el
+	// displayMapping, desambiguando homónimas con &sourceTable=. Sin ?column, se
+	// conserva intacta la ruta de acción (findDynamicField + ?action).
+	var src modules.DynamicSource
+	if c.Query("column") != "" {
+		principal := modules.MultiTableFromFetchMapping(def.FetchMapping).PrincipalTable
+		resolved, ok := resolveColumnDynamicSource(def, c.Param("field"), c.Query("sourceTable"), principal)
+		if !ok {
+			writeError(c, http.StatusNotFound, "E404", "La columna no tiene una fuente de valores dinámica")
+			return
+		}
+		src = resolved
+	} else {
+		field, ok := findDynamicField(def.Actions, c.Param("field"), c.Query("action"))
+		if !ok {
+			writeError(c, http.StatusNotFound, "E404", "Campo dinámico no encontrado en el módulo")
+			return
+		}
+		src = *field.DynamicSource
 	}
 
 	// Solo el camino Postgres soporta orígenes dinámicos. Se valida el tipo de
@@ -295,7 +312,7 @@ func (h *ModulesHandler) FieldOptions(c *gin.Context) {
 		return
 	}
 
-	opts, err := pg.Options(c.Request.Context(), *def, *field.DynamicSource)
+	opts, err := pg.Options(c.Request.Context(), *def, src)
 	if err != nil {
 		switch {
 		case errors.Is(err, engine.ErrWhitelist):
@@ -339,6 +356,32 @@ func findDynamicField(actions []modules.Action, field, actionKey string) (module
 		}
 	}
 	return modules.FieldSpec{}, false
+}
+
+// resolveColumnDynamicSource localiza la fuente dinámica declarada por una
+// COLUMNA del módulo (valueSource.kind=="dynamic"). Resuelve la identidad de la
+// columna por (field, sourceTable): un sourceTable vacío equivale a la tabla
+// principal (compatibilidad N=1), por lo que ante columnas homónimas sin
+// sourceTable se toma la de la principal. Devuelve el DynamicSource por valor y
+// ok=true solo si la columna tiene ValueSource!=nil, Kind=="dynamic" y
+// DynamicSource!=nil; en cualquier otro caso (columna estática, sin fuente o
+// inexistente) devuelve ok=false para que el handler responda 404.
+func resolveColumnDynamicSource(def *modules.Definition, field, sourceTable, principal string) (modules.DynamicSource, bool) {
+	cols := modules.ColumnsFromDisplayMappingWithPrincipal(def.DisplayMapping, principal)
+	resolvedTable := sourceTable
+	if resolvedTable == "" {
+		resolvedTable = principal
+	}
+	for _, c := range cols {
+		if c.Field != field || c.SourceTable != resolvedTable {
+			continue
+		}
+		if c.ValueSource != nil && c.ValueSource.Kind == "dynamic" && c.ValueSource.DynamicSource != nil {
+			return *c.ValueSource.DynamicSource, true
+		}
+		return modules.DynamicSource{}, false
+	}
+	return modules.DynamicSource{}, false
 }
 
 // ExecAction maneja POST /modules/:slug/actions/:actionId: ejecuta una acción
