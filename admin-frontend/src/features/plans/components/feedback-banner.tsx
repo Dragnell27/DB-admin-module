@@ -36,7 +36,7 @@ export function FeedbackBanner({
         "flex items-start gap-2 rounded-md border px-3 py-2 text-sm",
         isSuccess
           ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-400"
-          : "border-destructive/50 bg-destructive/10 text-destructive",
+          : "border-destructive/50 bg-destructive/10 text-destructive-text",
         className,
       )}
     >

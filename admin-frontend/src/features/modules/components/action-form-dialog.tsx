@@ -295,7 +295,7 @@ export function ActionFormDialog({
           >
             {destructive ? (
               <AlertTriangle
-                className="size-5 text-destructive"
+                className="size-5 text-destructive-text"
                 aria-hidden="true"
               />
             ) : null}
@@ -314,7 +314,7 @@ export function ActionFormDialog({
             {errorMessage ? (
               <div
                 role="alert"
-                className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+                className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive-text"
               >
                 <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
                 <span>{errorMessage}</span>
@@ -334,7 +334,7 @@ export function ActionFormDialog({
                       {cf.readOnly ? (
                         <span className="text-muted-foreground"> (solo lectura)</span>
                       ) : cf.required ? (
-                        <span className="text-destructive"> *</span>
+                        <span className="text-destructive-text"> *</span>
                       ) : null}
                     </Label>
                     {cf.options ? (
@@ -363,7 +363,7 @@ export function ActionFormDialog({
                           ))}
                         </select>
                         {cf.optionsError ? (
-                          <p className="text-xs text-destructive">
+                          <p className="text-xs text-destructive-text">
                             No se pudieron cargar las opciones
                           </p>
                         ) : null}
@@ -381,7 +381,7 @@ export function ActionFormDialog({
                       />
                     )}
                     {errors[cf.field] ? (
-                      <p className="text-xs text-destructive">{errors[cf.field]}</p>
+                      <p className="text-xs text-destructive-text">{errors[cf.field]}</p>
                     ) : null}
                   </div>
                 ))
@@ -395,7 +395,7 @@ export function ActionFormDialog({
                 <div key={f.name} className="space-y-1.5">
                   <Label htmlFor={`field_${f.name}`}>
                     {fieldLabels[f.name] ?? f.name}
-                    {f.required ? <span className="text-destructive"> *</span> : null}
+                    {f.required ? <span className="text-destructive-text"> *</span> : null}
                   </Label>
                   {f.source === "select" || f.source === "dynamic" ? (
                     <select
@@ -420,7 +420,7 @@ export function ActionFormDialog({
                   ) : null}
                   {(f.source === "select" || f.source === "dynamic") &&
                   f.optionsError ? (
-                    <p className="text-xs text-destructive">
+                    <p className="text-xs text-destructive-text">
                       No se pudieron cargar las opciones
                     </p>
                   ) : null}
@@ -453,7 +453,7 @@ export function ActionFormDialog({
                     />
                   )}
                   {errors[f.name] ? (
-                    <p className="text-xs text-destructive">{errors[f.name]}</p>
+                    <p className="text-xs text-destructive-text">{errors[f.name]}</p>
                   ) : null}
                 </div>
               ))

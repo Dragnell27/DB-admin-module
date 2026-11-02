@@ -103,7 +103,7 @@ export function SearchSelect({
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          "flex h-10 w-full items-center justify-between rounded-md border border-input bg-input px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50",
+          "flex h-10 w-full items-center justify-between rounded-md border border-input bg-[var(--input-surface,var(--input))] px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50",
           !selected && "text-muted-foreground",
         )}
       >
@@ -118,7 +118,10 @@ export function SearchSelect({
       </button>
 
       {open && !disabled ? (
-        <div className="absolute z-50 mt-1 w-full rounded-md border border-border bg-card shadow-lg">
+        <div
+          data-popover
+          className="absolute z-50 mt-1 w-full rounded-md border border-border bg-card shadow-lg"
+        >
           <div className="p-2">
             <Input
               autoFocus

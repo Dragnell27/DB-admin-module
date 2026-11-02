@@ -33,7 +33,7 @@ export function FeedbackBanner({
   // error (destructive/AlertCircle) y warning (amber/AlertTriangle).
   const toneStyles: Readonly<Record<FeedbackTone, string>> = {
     success: "border-emerald-500/50 bg-emerald-500/10 text-emerald-400",
-    error: "border-destructive/50 bg-destructive/10 text-destructive",
+    error: "border-destructive/50 bg-destructive/10 text-destructive-text",
     warning: "border-amber-500/50 bg-amber-500/10 text-amber-400",
   };
   const toneIcons: Readonly<Record<FeedbackTone, LucideIcon>> = {

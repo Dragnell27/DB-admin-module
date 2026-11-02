@@ -71,7 +71,7 @@ export function ConfirmActionDialog({
       <Card className="w-full max-w-md shadow-lg" onClick={(e) => e.stopPropagation()}>
         <CardHeader className="space-y-1">
           <CardTitle id="confirm-action-title" className="flex items-center gap-2 text-xl">
-            <AlertTriangle className="size-5 text-destructive" aria-hidden="true" />
+            <AlertTriangle className="size-5 text-destructive-text" aria-hidden="true" />
             {label}
           </CardTitle>
           <CardDescription>
@@ -86,7 +86,7 @@ export function ConfirmActionDialog({
           <CardContent>
             <div
               role="alert"
-              className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+              className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive-text"
             >
               <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
               <span>{errorMessage}</span>
