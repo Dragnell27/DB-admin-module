@@ -1012,10 +1012,11 @@ export function ModuleView({ slug }: ModuleViewProps) {
       }
       return out;
     },
-    // Vuelve a depender de multiTable/principalTable: resolveColumnOptionSource
-    // empareja el FieldSpec por (name, sourceTable) usando la tabla principal, de
-    // modo que el emparejamiento cambia si cambia la principal / el modo tabla.
-    [allColumns, multiTable, principalTable],
+    // Vuelve a depender de principalTable: resolveColumnOptionSource empareja el
+    // FieldSpec por (name, sourceTable) usando la tabla principal, de modo que el
+    // emparejamiento cambia si cambia la principal (que a su vez deriva del modo
+    // tabla). No se incluye multiTable porque principalTable ya refleja ese cambio.
+    [allColumns, principalTable],
   );
 
   // Compone el input final de una acción de editar: valores editables del
