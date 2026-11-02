@@ -12,6 +12,7 @@ import { z } from "zod";
 
 import type {
   ActionKind,
+  ColumnValueSource,
   CountryScope,
   DynamicSource,
   FieldSpec,
@@ -159,6 +160,20 @@ export function datalistActionKeys(
   return result;
 }
 
+/**
+ * Estado de la FUENTE DE VALORES de una columna en el asistente. `kind` "none"
+ * (por defecto) no emite `valueSource` (JSONB idéntico al histórico); "static"
+ * usa `options`; "dynamic" usa `dynamicSource` + `dynamicFilters` (shape de
+ * formulario, EXACTAMENTE igual que los campos de acción). Las cuatro claves
+ * coexisten para que cambiar de tipo no pierda lo ya capturado en el otro.
+ */
+export interface ColumnValueSourceFormState {
+  kind: "none" | "static" | "dynamic";
+  options: SelectOption[];
+  dynamicSource: DynamicSource;
+  dynamicFilters: ConditionFormState[];
+}
+
 /** Estado de una columna de visualización en el asistente. */
 export interface ColumnFormState {
   field: string;
@@ -176,6 +191,13 @@ export interface ColumnFormState {
    * principal. Desambigua columnas homónimas por (sourceTable, field).
    */
   sourceTable: string;
+  /**
+   * Fuente de valores de la columna (ninguna/estática/dinámica). Se conserva
+   * entera en syncColumnsWithWhitelist/syncColumnsMultiTable (preservan la fila
+   * completa de las columnas que persisten), por lo que no necesita rehidratarse
+   * al sincronizar la lista blanca.
+   */
+  valueSource: ColumnValueSourceFormState;
 }
 
 /**
@@ -270,6 +292,12 @@ export function defaultColumn(
     isPrimaryKey: false,
     editable: true,
     sourceTable,
+    valueSource: {
+      kind: "none",
+      options: [],
+      dynamicSource: { table: "", idColumn: "", labelColumn: "", order: { column: "", direction: "asc" } },
+      dynamicFilters: [],
+    },
   };
 }
 
@@ -691,9 +719,12 @@ export function defaultPlacementForKind(kind: ActionKind): Placement {
  * comas, trim, descarta campos/valores vacíos). El orden solo se emite si hay
  * columna; el límite solo si es > 0 (el backend acota el techo a 500).
  */
-function toDynamicSource(f: FieldFormState): DynamicSource {
-  const ds = f.dynamicSource;
-  const filters: ListCondition[] = f.dynamicFilters
+function toDynamicSourceCore(input: {
+  dynamicSource: DynamicSource;
+  dynamicFilters: ConditionFormState[];
+}): DynamicSource {
+  const ds = input.dynamicSource;
+  const filters: ListCondition[] = input.dynamicFilters
     .map((c) => ({
       field: c.field.trim(),
       values: c.valuesText
@@ -714,6 +745,39 @@ function toDynamicSource(f: FieldFormState): DynamicSource {
     order,
     limit: typeof ds.limit === "number" && ds.limit > 0 ? ds.limit : undefined,
   };
+}
+
+/** Construye la `DynamicSource` del BFF desde el estado de un CAMPO dinámico. */
+function toDynamicSource(f: FieldFormState): DynamicSource {
+  return toDynamicSourceCore({
+    dynamicSource: f.dynamicSource,
+    dynamicFilters: f.dynamicFilters,
+  });
+}
+
+/**
+ * Construye el `valueSource` del BFF a partir del estado de fuente de valores
+ * de una columna. Devuelve undefined cuando `kind === "none"` (se OMITE el
+ * campo => JSONB idéntico al histórico, retrocompat byte a byte); `static`
+ * emite `{kind, options}` y `dynamic` emite `{kind, dynamicSource}` reutilizando
+ * el mismo núcleo plano que los campos de acción.
+ */
+function toColumnValueSource(
+  vs: ColumnValueSourceFormState,
+): ColumnValueSource | undefined {
+  if (vs.kind === "static") {
+    return { kind: "static", options: vs.options };
+  }
+  if (vs.kind === "dynamic") {
+    return {
+      kind: "dynamic",
+      dynamicSource: toDynamicSourceCore({
+        dynamicSource: vs.dynamicSource,
+        dynamicFilters: vs.dynamicFilters,
+      }),
+    };
+  }
+  return undefined;
 }
 
 /** Convierte el estado del asistente a la carga útil del BFF (crear/editar). */
@@ -805,6 +869,9 @@ export function toDefinitionInput(state: WizardState): ModuleDefinitionInput {
         multi && c.sourceTable && c.sourceTable !== principal
           ? c.sourceTable
           : undefined,
+      // valueSource solo se emite si kind es static/dynamic; "none" => undefined
+      // (omitido), produciendo el MISMO JSONB que una columna sin fuente.
+      valueSource: toColumnValueSource(c.valueSource),
     })),
   };
 
@@ -859,6 +926,71 @@ export function toDefinitionInput(state: WizardState): ModuleDefinitionInput {
  * editar. Las credenciales llegan vacías (el backend nunca las devuelve): el
  * usuario las deja vacías para conservarlas o las reescribe para cambiarlas.
  */
+/**
+ * Reconstruye el estado de formulario de la fuente de valores de una columna a
+ * partir del `valueSource` JSON (tolerante). Inverso de `toColumnValueSource`:
+ *   - ausente / kind no en {static,dynamic} ⇒ kind "none" (y estructuras vacías
+ *     por defecto, listas para capturar).
+ *   - "static" ⇒ options tal cual.
+ *   - "dynamic" ⇒ dynamicSource con order por defecto {column:"",direction:"asc"}
+ *     y dynamicFilters desde dynamicSource.filters (join por comas), igual que
+ *     la hidratación de los filtros de un campo dinámico.
+ * Función pura; nunca lanza.
+ */
+function columnValueSourceFromDefinition(
+  raw: unknown,
+): ColumnValueSourceFormState {
+  const empty: ColumnValueSourceFormState = {
+    kind: "none",
+    options: [],
+    dynamicSource: { table: "", idColumn: "", labelColumn: "", order: { column: "", direction: "asc" } },
+    dynamicFilters: [],
+  };
+  if (!raw || typeof raw !== "object") {
+    return empty;
+  }
+  const vs = raw as {
+    kind?: unknown;
+    options?: unknown;
+    dynamicSource?: {
+      table?: unknown;
+      idColumn?: unknown;
+      labelColumn?: unknown;
+      order?: OrderSpec;
+      limit?: unknown;
+      filters?: Array<{ field?: unknown; values?: unknown }>;
+    };
+  };
+  if (vs.kind === "static") {
+    return {
+      ...empty,
+      kind: "static",
+      options: Array.isArray(vs.options) ? (vs.options as SelectOption[]) : [],
+    };
+  }
+  if (vs.kind === "dynamic") {
+    const ds = vs.dynamicSource ?? {};
+    return {
+      ...empty,
+      kind: "dynamic",
+      dynamicSource: {
+        table: typeof ds.table === "string" ? ds.table : "",
+        idColumn: typeof ds.idColumn === "string" ? ds.idColumn : "",
+        labelColumn: typeof ds.labelColumn === "string" ? ds.labelColumn : "",
+        order: ds.order ?? { column: "", direction: "asc" },
+        limit: typeof ds.limit === "number" ? ds.limit : undefined,
+      },
+      dynamicFilters: (ds.filters ?? []).map((cond) => ({
+        field: String(cond.field ?? ""),
+        valuesText: (Array.isArray(cond.values) ? (cond.values as unknown[]) : [])
+          .map((v) => String(v))
+          .join(", "),
+      })),
+    };
+  }
+  return empty;
+}
+
 export function fromDefinition(def: ModuleDefinitionInput): WizardState {
   const base = emptyWizardState();
   const fetch = def.fetchMapping ?? {};
@@ -937,6 +1069,9 @@ export function fromDefinition(def: ModuleDefinitionInput): WizardState {
         sourceTable: typeof c.sourceTable === "string" && c.sourceTable !== ""
           ? String(c.sourceTable)
           : principal,
+        // Fuente de valores tolerante: ausente ⇒ kind "none" (no emite nada al
+        // reguardar); inverso de toColumnValueSource.
+        valueSource: columnValueSourceFromDefinition(c.valueSource),
       };
     }),
     conditions: (def.listConditions ?? []).map((cond) => ({
@@ -1035,17 +1170,33 @@ export function hasAtLeastOneColumn(state: WizardState): boolean {
  */
 export function selectFieldError(field: FieldFormState): string | null {
   const label = field.name || "(sin nombre)";
-  if (field.options.length === 0) {
+  return selectOptionsError(field.options, label, field.defaultValue);
+}
+
+/**
+ * Núcleo PLANO de validación de una lista estática de opciones etiqueta/valor,
+ * reutilizable por campos de acción (`selectFieldError`) y por columnas con
+ * fuente estática (`ColumnValueSourceFormState`). Aplica las 4 reglas en orden
+ * y devuelve el mensaje (español) de la PRIMERA incumplida, o null si es
+ * válida. `label` es el nombre legible (campo o columna) que se interpola en el
+ * mensaje; `defaultValue` (opcional) activa la 4ª regla.
+ */
+export function selectOptionsError(
+  options: ReadonlyArray<SelectOption>,
+  label: string,
+  defaultValue?: string,
+): string | null {
+  if (options.length === 0) {
     return `El campo "${label}" de tipo selección necesita al menos una opción`;
   }
-  if (field.options.some((o) => o.label.trim() === "" || o.value.trim() === "")) {
+  if (options.some((o) => o.label.trim() === "" || o.value.trim() === "")) {
     return `Las opciones del campo "${label}" no pueden tener etiqueta o valor vacíos`;
   }
-  const values = field.options.map((o) => o.value);
+  const values = options.map((o) => o.value);
   if (new Set(values).size !== values.length) {
     return `El campo "${label}" tiene valores de opción repetidos`;
   }
-  if (field.defaultValue !== "" && !values.includes(field.defaultValue)) {
+  if (defaultValue !== undefined && defaultValue !== "" && !values.includes(defaultValue)) {
     return `La opción por defecto del campo "${label}" ya no existe`;
   }
   return null;
@@ -1061,7 +1212,22 @@ export function selectFieldError(field: FieldFormState): string | null {
  */
 export function dynamicFieldError(field: FieldFormState): string | null {
   const label = field.name || "(sin nombre)";
-  const ds = field.dynamicSource;
+  return dynamicSourceError(field.dynamicSource, label);
+}
+
+/**
+ * Núcleo PLANO de validación de una fuente dinámica (tabla/id/etiqueta no
+ * vacías), reutilizable por campos de acción (`dynamicFieldError`) y por
+ * columnas con fuente dinámica. Aplica las 3 reglas en orden y devuelve el
+ * mensaje (español) de la PRIMERA incumplida, o null si es válida. `label` es
+ * el nombre legible (campo o columna) que se interpola en el mensaje. NO
+ * sustituye la validación del backend (vuelve a validar contra la lista
+ * blanca).
+ */
+export function dynamicSourceError(
+  ds: { table: string; idColumn: string; labelColumn: string },
+  label: string,
+): string | null {
   if (!ds || ds.table.trim() === "") {
     return `El campo "${label}" de lista dinámica necesita una tabla de origen`;
   }

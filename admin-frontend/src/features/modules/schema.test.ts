@@ -49,7 +49,7 @@ function stateWithFields(fields: FieldFormState[]): WizardState {
     pgTable: "afiliaciones",
     pgWhitelist: { afiliaciones: ["id"] },
     columns: [
-      { field: "id", label: "ID", order: 0, format: "", visible: true, isPrimaryKey: false, editable: true, sourceTable: "afiliaciones" },
+      { ...defaultColumn("id", 0, "afiliaciones"), label: "ID" },
     ],
     actions: [
       {
@@ -202,7 +202,7 @@ describe("matchType de acción SELECT (omitempty) y retiro del buscador por colu
       pgTable: "t",
       pgWhitelist: { t: ["nombre"] },
       columns: [
-        { field: "nombre", label: "Nombre", order: 0, format: "", visible: true, isPrimaryKey: false, editable: true, sourceTable: "t" },
+        { ...defaultColumn("nombre", 0, "t"), label: "Nombre" },
       ],
       actions: [
         {

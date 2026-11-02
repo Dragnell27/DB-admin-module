@@ -9,6 +9,7 @@ import {
   buildColumnOptions,
   columnOptionLabel,
   columnOptionValue,
+  defaultColumn,
   emptyWizardState,
   fromDefinition,
   parseColumnOptionValue,
@@ -20,14 +21,7 @@ import {
 /** Columna definida de prueba. */
 function col(field: string, sourceTable: string): ColumnFormState {
   return {
-    field,
-    label: field,
-    order: 0,
-    format: "",
-    visible: true,
-    isPrimaryKey: false,
-    editable: true,
-    sourceTable,
+    ...defaultColumn(field, 0, sourceTable),
   };
 }
 

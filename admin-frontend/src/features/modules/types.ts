@@ -294,4 +294,25 @@ export interface DisplayColumn {
    * (compatibilidad N=1). Junto con `field` desambigua columnas homónimas.
    */
   sourceTable?: string;
+  /**
+   * Fuente de valores de la columna (lista estática o dinámica) para resolver
+   * id→etiqueta al listar y poblar el desplegable al crear/editar. Opcional
+   * (omitempty): ausente ⇒ comportamiento histórico idéntico. Espejo de
+   * modules.ColumnValueSource del backend (FEAT-001).
+   */
+  valueSource?: ColumnValueSource;
+}
+
+/** Tipo de fuente de valores de una columna (conjunto cerrado). */
+export type ColumnValueSourceKind = "static" | "dynamic";
+
+/**
+ * Fuente de valores de una columna. Espejo de modules.ColumnValueSource del
+ * backend: `kind` "static" lleva `options` (lista estática etiqueta/valor);
+ * `kind` "dynamic" lleva `dynamicSource` (tabla de catálogo id→etiqueta).
+ */
+export interface ColumnValueSource {
+  kind: ColumnValueSourceKind;
+  options?: SelectOption[];
+  dynamicSource?: DynamicSource;
 }

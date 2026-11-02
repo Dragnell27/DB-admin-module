@@ -42,12 +42,14 @@ import { useConnectionTemplates } from "@/features/connections/hooks";
 import {
   actionIsComplete,
   dynamicFieldError,
+  dynamicSourceError,
   emptyWizardState,
   fromCopyableDefinition,
   hasAtLeastOneColumn,
   tablesMissingPrimaryKey,
   moduleBaseSchema,
   selectFieldError,
+  selectOptionsError,
   toDefinitionInput,
   type WizardState,
 } from "@/features/modules/schema";
@@ -167,6 +169,24 @@ export function ModuleWizard({ initial, editSlug, title }: ModuleWizardProps) {
       if (id === "columns") {
         if (!hasAtLeastOneColumn(state)) {
           return { ok: false, error: "Agrega al menos una columna visible" };
+        }
+        // Fuente de valores por columna: si es estática/dinámica, debe ser
+        // válida (mismas reglas que los campos de acción) antes de guardar.
+        for (const col of state.columns) {
+          const vs = col.valueSource;
+          const colLabel = col.label || col.field;
+          if (vs.kind === "static") {
+            const err = selectOptionsError(vs.options, colLabel);
+            if (err) {
+              return { ok: false, error: err };
+            }
+          }
+          if (vs.kind === "dynamic") {
+            const err = dynamicSourceError(vs.dynamicSource, colLabel);
+            if (err) {
+              return { ok: false, error: err };
+            }
+          }
         }
         return { ok: true, error: null };
       }

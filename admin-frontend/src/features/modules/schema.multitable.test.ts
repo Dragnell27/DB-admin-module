@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  defaultColumn,
   deleteOrder,
   emptyWizardState,
   fromDefinition,
@@ -40,10 +41,10 @@ function multiState(): WizardState {
       clientes: ["id", "nombre"],
     },
     columns: [
-      { field: "id", label: "ID", order: 0, format: "", visible: false, isPrimaryKey: true, editable: false, sourceTable: "pagos" },
-      { field: "monto", label: "Monto", order: 1, format: "", visible: true, isPrimaryKey: false, editable: true, sourceTable: "pagos" },
-      { field: "id", label: "ID cliente", order: 2, format: "", visible: false, isPrimaryKey: true, editable: false, sourceTable: "clientes" },
-      { field: "nombre", label: "Nombre", order: 3, format: "", visible: true, isPrimaryKey: false, editable: true, sourceTable: "clientes" },
+      { ...defaultColumn("id", 0, "pagos"), label: "ID", visible: false, isPrimaryKey: true, editable: false },
+      { ...defaultColumn("monto", 1, "pagos"), label: "Monto" },
+      { ...defaultColumn("id", 2, "clientes"), label: "ID cliente", visible: false, isPrimaryKey: true, editable: false },
+      { ...defaultColumn("nombre", 3, "clientes"), label: "Nombre" },
     ],
     conditions: [{ field: "nombre", valuesText: "Ana", sourceTable: "clientes" }],
     actions: [
@@ -154,7 +155,7 @@ describe("toDefinitionInput/fromDefinition round-trip multi-tabla", () => {
       pgTable: "planes",
       pgWhitelist: { planes: ["id", "monto"] },
       columns: [
-        { field: "id", label: "ID", order: 0, format: "", visible: true, isPrimaryKey: true, editable: false, sourceTable: "planes" },
+        { ...defaultColumn("id", 0, "planes"), label: "ID", isPrimaryKey: true, editable: false },
       ],
     };
     const input = toDefinitionInput(state);

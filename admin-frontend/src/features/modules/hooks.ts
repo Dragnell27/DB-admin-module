@@ -69,6 +69,8 @@ export const moduleKeys = {
   ) => ["module", slug, "action-list", actionKey, input, params] as const,
   options: (slug: string, field: string, actionKey: string) =>
     ["module", slug, "options", field, actionKey] as const,
+  columnOptions: (slug: string, field: string, sourceTable?: string) =>
+    ["module", slug, "column-options", field, sourceTable ?? ""] as const,
 };
 
 /**
@@ -115,6 +117,38 @@ export function useModuleFieldOptions(
     },
     enabled:
       Boolean(slug && field && actionKey) && (options?.enabled ?? true),
+  });
+}
+
+/**
+ * Carga las opciones [{id,label}] de la FUENTE DE VALORES de una columna
+ * (`GET /modules/:slug/options/:field?column=true[&sourceTable=...]`) y
+ * desenvuelve `data.items`. Paralelo a `useModuleFieldOptions`, pero
+ * desambigua por COLUMNA (no por acción): envía siempre `column=true` y, SOLO si
+ * `sourceTable` es truthy, `sourceTable=<tabla>` para distinguir columnas
+ * homónimas entre tablas. Se deshabilita si falta slug/field o si
+ * `enabled === false`. `apiClient` hereda `Authorization` y `X-Country`.
+ */
+export function useModuleColumnOptions(
+  slug: string,
+  field: string,
+  sourceTable?: string,
+  options?: { enabled?: boolean },
+): UseQueryResult<ReadonlyArray<FieldOption>, ApiError> {
+  return useQuery<ReadonlyArray<FieldOption>, ApiError>({
+    queryKey: moduleKeys.columnOptions(slug, field, sourceTable),
+    queryFn: async () => {
+      const params: Record<string, string> = { column: "true" };
+      if (sourceTable) {
+        params.sourceTable = sourceTable;
+      }
+      const res = await apiClient.get<ApiEnvelope<ModuleOptionsData>>(
+        `/modules/${encodeURIComponent(slug)}/options/${encodeURIComponent(field)}`,
+        { params },
+      );
+      return res.data?.data?.items ?? [];
+    },
+    enabled: Boolean(slug && field) && (options?.enabled ?? true),
   });
 }
 

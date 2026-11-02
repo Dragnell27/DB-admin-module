@@ -32,8 +32,10 @@ import type {
 } from "@/features/connections/types";
 import type {
   ActionKind,
+  DynamicSource,
   FieldType,
   OrderDirection,
+  SelectOption,
 } from "@/features/modules/types";
 import {
   buildColumnOptions,
@@ -51,6 +53,7 @@ import {
   treeError,
   type ActionFormState,
   type ColumnFormState,
+  type ColumnValueSourceFormState,
   type ConditionFormState,
   type FieldFormState,
   type RelationshipFormState,
@@ -731,6 +734,74 @@ function RelationshipsEditor({ state, patch }: SectionProps) {
   );
 }
 
+/**
+ * Editor de la FUENTE DE VALORES de una columna: un `<select>` de tipo
+ * (Ninguna / Lista estática / Lista dinámica) y, según el tipo, el editor
+ * estático (`StaticOptionsEditor`) sobre `vs.options` o el editor dinámico
+ * (`DynamicSourceEditor`, solo filtros de igualdad) sobre `vs.dynamicSource` +
+ * `vs.dynamicFilters`. Opera de forma INMUTABLE sobre `vs` y propaga el objeto
+ * completo con `onChange`. UI en español, tema oscuro.
+ */
+function ColumnValueSourceEditor({
+  vs,
+  onChange,
+}: {
+  readonly vs: ColumnValueSourceFormState;
+  readonly onChange: (next: ColumnValueSourceFormState) => void;
+}) {
+  const addOption = () => {
+    onChange({ ...vs, options: [...vs.options, { label: "", value: "" }] });
+  };
+  const updateOption = (oi: number, p: Partial<SelectOption>) => {
+    const options = vs.options.slice();
+    options[oi] = { ...options[oi], ...p };
+    onChange({ ...vs, options });
+  };
+  const removeOption = (oi: number) => {
+    onChange({ ...vs, options: vs.options.filter((_, idx) => idx !== oi) });
+  };
+
+  return (
+    <div className="space-y-2 border-t border-border/40 pt-2">
+      <div className="space-y-1">
+        <Label>Fuente de valores</Label>
+        <select
+          className={inputClass}
+          value={vs.kind}
+          onChange={(e) =>
+            onChange({ ...vs, kind: e.target.value as ColumnValueSourceFormState["kind"] })
+          }
+        >
+          <option value="none">Ninguna</option>
+          <option value="static">Lista estática</option>
+          <option value="dynamic">Lista dinámica</option>
+        </select>
+        <p className="text-xs text-muted-foreground">
+          Resuelve id→etiqueta al listar y puebla el desplegable al crear o editar.
+        </p>
+      </div>
+
+      {vs.kind === "static" ? (
+        <StaticOptionsEditor
+          options={vs.options}
+          onAddOption={addOption}
+          onUpdateOption={updateOption}
+          onRemoveOption={removeOption}
+          showDefault={false}
+        />
+      ) : null}
+
+      {vs.kind === "dynamic" ? (
+        <DynamicSourceEditor
+          dynamicSource={vs.dynamicSource}
+          dynamicFilters={vs.dynamicFilters}
+          onPatch={(p) => onChange({ ...vs, ...p })}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 /* === Sección: Columnas (rediseñada) ====================================== */
 
 export function ColumnsSection({ state, patch }: SectionProps) {
@@ -867,6 +938,11 @@ export function ColumnsSection({ state, patch }: SectionProps) {
                 onCheckedChange={(v) => updateColumn(i, { editable: v })}
               />
             </div>
+            {/* Fuente de valores (lista estática/dinámica) de la columna. */}
+            <ColumnValueSourceEditor
+              vs={col.valueSource}
+              onChange={(next) => updateColumn(i, { valueSource: next })}
+            />
           </div>
         );
       })}
@@ -1040,15 +1116,20 @@ function ConditionsEditor({ state, patch }: SectionProps) {
  * `ConditionRowsEditor` para los filtros.
  */
 function DynamicSourceEditor({
-  field,
+  dynamicSource,
+  dynamicFilters,
   onPatch,
 }: {
-  readonly field: FieldFormState;
-  readonly onPatch: (p: Partial<FieldFormState>) => void;
+  readonly dynamicSource: DynamicSource;
+  readonly dynamicFilters: ConditionFormState[];
+  readonly onPatch: (p: {
+    dynamicSource?: DynamicSource;
+    dynamicFilters?: ConditionFormState[];
+  }) => void;
 }) {
-  const ds = field.dynamicSource;
+  const ds = dynamicSource;
   const order = ds.order ?? { column: "", direction: "asc" as OrderDirection };
-  const patchSource = (p: Partial<FieldFormState["dynamicSource"]>) => {
+  const patchSource = (p: Partial<DynamicSource>) => {
     onPatch({ dynamicSource: { ...ds, ...p } });
   };
   const patchOrder = (p: Partial<{ column: string; direction: OrderDirection }>) => {
@@ -1126,11 +1207,96 @@ function DynamicSourceEditor({
       <div className="space-y-2 border-t border-border/60 pt-2">
         <p className="text-xs font-medium text-muted-foreground">Filtros (opcional)</p>
         <ConditionRowsEditor
-          conditions={field.dynamicFilters}
+          conditions={dynamicFilters}
           onChange={(next) => onPatch({ dynamicFilters: next })}
           addLabel="Filtro"
         />
       </div>
+    </div>
+  );
+}
+
+/**
+ * Editor REUTILIZABLE de una lista ESTÁTICA de opciones etiqueta/valor con
+ * opción preseleccionada opcional. API plana: opera sobre `options` +
+ * `defaultValue` y propaga cambios con los handlers recibidos. Lo comparten los
+ * campos de acción source==="select" (ActionsSection) y las columnas con fuente
+ * estática (ColumnsSection). El render es idéntico al bloque original.
+ */
+function StaticOptionsEditor({
+  options,
+  defaultValue,
+  onAddOption,
+  onUpdateOption,
+  onRemoveOption,
+  onDefaultChange,
+  showDefault = true,
+}: {
+  readonly options: SelectOption[];
+  readonly defaultValue?: string;
+  readonly onAddOption: () => void;
+  readonly onUpdateOption: (oi: number, p: Partial<SelectOption>) => void;
+  readonly onRemoveOption: (oi: number) => void;
+  readonly onDefaultChange?: (value: string) => void;
+  readonly showDefault?: boolean;
+}) {
+  return (
+    <div className="space-y-2 rounded-md border border-border/60 p-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-muted-foreground">Opciones de la lista</span>
+        <Button type="button" variant="ghost" size="sm" onClick={onAddOption}>
+          <Plus aria-hidden="true" /> Opción
+        </Button>
+      </div>
+      {options.map((opt, oi) => (
+        <div key={oi} className="grid items-end gap-2 sm:grid-cols-[1fr_1fr_auto]">
+          <div className="space-y-1">
+            <Label>Etiqueta</Label>
+            <Input
+              value={opt.label}
+              onChange={(e) => onUpdateOption(oi, { label: e.target.value })}
+              placeholder="Guatemala"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label>Valor</Label>
+            <Input
+              value={opt.value}
+              onChange={(e) => onUpdateOption(oi, { value: e.target.value })}
+              placeholder="gt"
+            />
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => onRemoveOption(oi)}
+            aria-label="Quitar opción"
+          >
+            <Trash2 aria-hidden="true" />
+          </Button>
+        </div>
+      ))}
+      {options.length === 0 ? (
+        <p className="text-xs text-muted-foreground">Aún no hay opciones. Agrega al menos una.</p>
+      ) : null}
+      {showDefault && onDefaultChange ? (
+        <div className="space-y-1">
+          <Label>Opción por defecto</Label>
+          <select
+            className={inputClass}
+            value={defaultValue ?? ""}
+            onChange={(e) => onDefaultChange(e.target.value)}
+          >
+            <option value="">— Sin preselección —</option>
+            {options.map((opt, oi) => (
+              <option key={oi} value={opt.value}>
+                {opt.label || opt.value}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1536,68 +1702,22 @@ export function ActionsSection({ state, patch }: SectionProps) {
                       valor) que el usuario elige en tiempo de ejecución, con una
                       opción preseleccionada opcional. */}
                   {f.source === "select" ? (
-                    <div className="space-y-2 rounded-md border border-border/60 p-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-medium text-muted-foreground">Opciones de la lista</span>
-                        <Button type="button" variant="ghost" size="sm" onClick={() => addOption(ai, fi)}>
-                          <Plus aria-hidden="true" /> Opción
-                        </Button>
-                      </div>
-                      {f.options.map((opt, oi) => (
-                        <div key={oi} className="grid items-end gap-2 sm:grid-cols-[1fr_1fr_auto]">
-                          <div className="space-y-1">
-                            <Label>Etiqueta</Label>
-                            <Input
-                              value={opt.label}
-                              onChange={(e) => updateOption(ai, fi, oi, { label: e.target.value })}
-                              placeholder="Guatemala"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <Label>Valor</Label>
-                            <Input
-                              value={opt.value}
-                              onChange={(e) => updateOption(ai, fi, oi, { value: e.target.value })}
-                              placeholder="gt"
-                            />
-                          </div>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => removeOption(ai, fi, oi)}
-                            aria-label="Quitar opción"
-                          >
-                            <Trash2 aria-hidden="true" />
-                          </Button>
-                        </div>
-                      ))}
-                      {f.options.length === 0 ? (
-                        <p className="text-xs text-muted-foreground">Aún no hay opciones. Agrega al menos una.</p>
-                      ) : null}
-                      <div className="space-y-1">
-                        <Label>Opción por defecto</Label>
-                        <select
-                          className={inputClass}
-                          value={f.defaultValue}
-                          onChange={(e) => updateField(ai, fi, { defaultValue: e.target.value })}
-                        >
-                          <option value="">— Sin preselección —</option>
-                          {f.options.map((opt, oi) => (
-                            <option key={oi} value={opt.value}>
-                              {opt.label || opt.value}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
+                    <StaticOptionsEditor
+                      options={f.options}
+                      defaultValue={f.defaultValue}
+                      onAddOption={() => addOption(ai, fi)}
+                      onUpdateOption={(oi, p) => updateOption(ai, fi, oi, p)}
+                      onRemoveOption={(oi) => removeOption(ai, fi, oi)}
+                      onDefaultChange={(value) => updateField(ai, fi, { defaultValue: value })}
+                    />
                   ) : null}
 
                   {/* source==="dynamic": lista cuyas opciones [{id,label}] se
                       cargan en ejecución desde una tabla de catálogo. */}
                   {f.source === "dynamic" ? (
                     <DynamicSourceEditor
-                      field={f}
+                      dynamicSource={f.dynamicSource}
+                      dynamicFilters={f.dynamicFilters}
                       onPatch={(p) => updateField(ai, fi, p)}
                     />
                   ) : null}

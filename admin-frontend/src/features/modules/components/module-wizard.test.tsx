@@ -12,7 +12,7 @@ import "@testing-library/jest-dom/vitest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 
-import { emptyWizardState, toDefinitionInput, type WizardState } from "@/features/modules/schema";
+import { defaultColumn, emptyWizardState, toDefinitionInput, type WizardState } from "@/features/modules/schema";
 
 // --- Mocks de dependencias del componente -----------------------------------
 
@@ -59,26 +59,8 @@ function validEditState(): WizardState {
     pgTable: "facturas",
     pgWhitelist: { facturas: ["id", "monto"] },
     columns: [
-      {
-        field: "id",
-        label: "ID",
-        order: 0,
-        format: "",
-        visible: true,
-        isPrimaryKey: true,
-        editable: false,
-        sourceTable: "",
-      },
-      {
-        field: "monto",
-        label: "Monto",
-        order: 1,
-        format: "",
-        visible: true,
-        isPrimaryKey: false,
-        editable: true,
-        sourceTable: "",
-      },
+      { ...defaultColumn("id", 0, ""), label: "ID", isPrimaryKey: true, editable: false },
+      { ...defaultColumn("monto", 1, ""), label: "Monto" },
     ],
     actions: [
       {
