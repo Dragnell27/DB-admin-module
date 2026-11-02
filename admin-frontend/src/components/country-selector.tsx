@@ -66,28 +66,12 @@ export function CountrySelector() {
     [perms, data],
   );
 
-  // Normalizar la selección frente al conjunto permitido:
-  //  - si no hay selección aún, adoptar el país activo por defecto del backend
-  //    (si está permitido) o el primer país permitido;
-  //  - si la selección actual ya no está permitida (p. ej. cambió la sesión),
-  //    replegarse al primer país permitido.
-  // Mientras no haya países permitidos (sin permisos aún / cargando) no se hace
-  // nada, evitando escrituras innecesarias.
-  React.useEffect(() => {
-    if (countries.length === 0) {
-      return;
-    }
-    if (selected && countries.includes(selected)) {
-      return;
-    }
-    const fallback =
-      !selected && data?.active && countries.includes(data.active)
-        ? data.active
-        : countries[0];
-    if (fallback && fallback !== selected) {
-      setCountry(fallback);
-    }
-  }, [selected, countries, data?.active]);
+  // La inicialización/normalización del país seleccionado contra el conjunto
+  // permitido ya NO vive aquí: se MOVIÓ a `useCountryBootstrap`, montado en el
+  // layout `(protected)` para que corra en TODAS las rutas (incluida `/`), no
+  // solo donde se muestra este selector. El cálculo defensivo de `value` (más
+  // abajo) mantiene el `<select>` controlado y coherente mientras el bootstrap
+  // fija el país.
 
   const handleChange = React.useCallback(
     (event: React.ChangeEvent<HTMLSelectElement>) => {

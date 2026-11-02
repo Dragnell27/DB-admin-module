@@ -15,6 +15,7 @@
 import { AuthGuard } from "@/components/auth-guard";
 import { AppHeader } from "@/components/app-header";
 import { AppSidebar } from "@/components/app-sidebar";
+import { CountryBootstrap } from "@/components/country-bootstrap";
 import { ToastViewport } from "@/components/toast-viewport";
 
 export default function ProtectedLayout({
@@ -22,6 +23,11 @@ export default function ProtectedLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <AuthGuard>
+      {/* Inicializa el país por defecto para TODAS las rutas protegidas
+          (incluida `/`), antes de que el home y el sidebar filtren por país. No
+          pinta nada: evita el dashboard vacío tras login sin alterar el primer
+          render SSR/cliente. */}
+      <CountryBootstrap />
       <div className="flex h-screen overflow-hidden bg-background">
         <AppSidebar />
         <div className="flex min-w-0 flex-1 flex-col">
