@@ -223,7 +223,7 @@ export function CustomersTable() {
                 onChange={(event) => {
                   setSearchKind(event.target.value as SearchKind);
                 }}
-                className="h-10 w-full rounded-md border border-input bg-input px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-48"
+                className="h-10 w-full rounded-md border border-input-border bg-input px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-48"
               >
                 {SEARCH_KINDS.map((k) => (
                   <option key={k.value} value={k.value}>

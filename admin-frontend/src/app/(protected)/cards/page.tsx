@@ -171,7 +171,7 @@ export default function CardsPage() {
                 onChange={(event) =>
                   setKind(event.target.value as SelectorKind)
                 }
-                className="h-10 w-full rounded-md border border-input bg-input px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-44"
+                className="h-10 w-full rounded-md border border-input-border bg-input px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-44"
               >
                 <option value="customer_id">ID de cliente</option>
                 <option value="email">Correo electrónico</option>

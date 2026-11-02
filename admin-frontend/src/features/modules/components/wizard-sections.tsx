@@ -60,9 +60,10 @@ import {
   type WizardState,
 } from "@/features/modules/schema";
 
-/** Clase compartida de los `<select>`/inputs nativos (tema oscuro). */
+/** Clase compartida de los `<select>`/inputs nativos. Borde --input-border
+ *  (más marcado en claro) para que el campo se lea sobre la tarjeta. */
 export const inputClass =
-  "h-10 w-full rounded-md border border-input bg-input px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+  "h-10 w-full rounded-md border border-input-border bg-[var(--input-surface,var(--input))] px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 /** Indica si `field` corresponde a una columna definida en Columnas. */
 function isKnownColumn(state: WizardState, field: string): boolean {

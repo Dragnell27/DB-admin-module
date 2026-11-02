@@ -66,6 +66,9 @@
   --input-elevated: #ffffff; /* en claro el input ya es blanco; el borde distingue en diálogo */
   --input-hover: #f3f6fb;
   --input-surface: var(--input); /* cascada; la reasigna el contenedor elevado */
+  /* Borde del INPUT, más marcado que --border para que el campo blanco se lea
+     sobre la tarjeta blanca en claro. #6b7a93 = 4.0:1 sobre blanco (AA). */
+  --input-border: #6b7a93;
 
   --ring: #2563eb; /* azul identitario, foco visible (5.17:1 sobre blanco) */
 
@@ -140,6 +143,9 @@
   --input-elevated: #273253; /* input dentro de popover/diálogo: un paso más claro */
   --input-hover: #243050;
   --input-surface: var(--input); /* cascada; la reasigna el contenedor elevado */
+  /* Borde del INPUT en oscuro: el campo ya resalta por ser más claro que la
+     superficie; el borde usa el mismo --border visible. */
+  --input-border: #627294;
 
   --ring: #60a5fa; /* foco claro y visible (azul identitario claro) */
 
@@ -194,6 +200,7 @@
   --color-border-soft: var(--border-soft);
   --color-border: var(--border);
   --color-input: var(--input);
+  --color-input-border: var(--input-border);
   --color-ring: var(--ring);
 
   --color-sidebar: var(--sidebar);

@@ -392,7 +392,7 @@ export function ResourceTable<TRow>({
               <select
                 value={recordsPerPage}
                 onChange={handleRecordsPerPage}
-                className="h-9 rounded-md border border-input bg-input px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="h-9 rounded-md border border-input-border bg-input px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 aria-label="Registros por página"
               >
                 {pageSizeOptions

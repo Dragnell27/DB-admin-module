@@ -145,7 +145,7 @@ export function CountrySelector() {
         onChange={handleChange}
         disabled={onlyOne}
         aria-label="Seleccionar país"
-        className="h-9 rounded-md border border-input bg-input px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-70"
+        className="h-9 rounded-md border border-input-border bg-input px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-70"
       >
         {countries.map((code) => (
           <option key={code} value={code}>

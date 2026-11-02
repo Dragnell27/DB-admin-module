@@ -316,7 +316,7 @@ export function PlanForm({
             id="plan-country"
             {...register("country")}
             onChange={handleCountryChange}
-            className="h-10 w-full rounded-md border border-input bg-input px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="h-10 w-full rounded-md border border-input-border bg-input px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <option value="">Selecciona un país</option>
             {SUPPORTED_COUNTRIES.map((c) => (
@@ -351,7 +351,7 @@ export function PlanForm({
           <select
             id="plan-period-type"
             {...register("period_type")}
-            className="h-10 w-full rounded-md border border-input bg-input px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="h-10 w-full rounded-md border border-input-border bg-input px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <option value="">Selecciona un periodo</option>
             {PERIOD_TYPES.map((p) => (
@@ -468,7 +468,7 @@ export function PlanForm({
             <select
               id="plan-test-type-period"
               {...register("test_type_period")}
-              className="h-10 w-full rounded-md border border-input bg-input px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="h-10 w-full rounded-md border border-input-border bg-input px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <option value="">Ninguno</option>
               {PERIOD_TYPES.map((p) => (
@@ -519,7 +519,7 @@ export function PlanForm({
             <select
               id="plan-oneshot-period"
               {...register("oneshot_period")}
-              className="h-10 w-full rounded-md border border-input bg-input px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="h-10 w-full rounded-md border border-input-border bg-input px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <option value="">Ninguno</option>
               {PERIOD_TYPES.map((p) => (

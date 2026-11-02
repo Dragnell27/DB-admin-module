@@ -36,7 +36,7 @@ import {
 } from "@/features/connections/types";
 
 const inputClass =
-  "h-10 w-full rounded-md border border-input bg-input px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+  "h-10 w-full rounded-md border border-input-border bg-[var(--input-surface,var(--input))] px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 /** Estado de un campo en el editor: estructura + valor FIJO en claro. */
 export interface FieldRow {

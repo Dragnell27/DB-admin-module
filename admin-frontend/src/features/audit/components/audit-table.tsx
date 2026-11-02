@@ -387,7 +387,7 @@ export function AuditTable() {
                 onChange={(event) =>
                   setResourceDraft(event.target.value as Resource | "")
                 }
-                className="h-10 w-full rounded-md border border-input bg-input px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="h-10 w-full rounded-md border border-input-border bg-input px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 {RESOURCE_OPTIONS.map((opt) => (
                   <option key={opt.value || "all"} value={opt.value}>
@@ -415,7 +415,7 @@ export function AuditTable() {
                 type="date"
                 value={fromDraft}
                 onChange={(event) => setFromDraft(event.target.value)}
-                className="flex h-10 w-full rounded-md border border-input bg-input px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex h-10 w-full rounded-md border border-input-border bg-input px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
 
@@ -426,7 +426,7 @@ export function AuditTable() {
                 type="date"
                 value={toDraft}
                 onChange={(event) => setToDraft(event.target.value)}
-                className="flex h-10 w-full rounded-md border border-input bg-input px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex h-10 w-full rounded-md border border-input-border bg-input px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
 
