@@ -9,11 +9,11 @@
 //     existente (equivalencia de payload con la versión previa del stepper).
 
 import "@testing-library/jest-dom/vitest";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 
 import { defaultColumn, emptyWizardState, toDefinitionInput, type WizardState } from "@/features/modules/schema";
-import { HEADER_ACTIONS_SLOT_ID, getPageTitle, setPageTitle } from "@/lib/page-chrome";
+import { getPageTitle, setPageTitle } from "@/lib/page-chrome";
 
 // --- Mocks de dependencias del componente -----------------------------------
 
@@ -42,19 +42,11 @@ vi.mock("@/features/connections/hooks", () => ({
 import { ModuleWizard } from "@/features/modules/components/module-wizard";
 
 // La topbar del panel expone un slot (`HEADER_ACTIONS_SLOT_ID`) donde el
-// asistente PORTEA sus botones Guardar/Cancelar (bloque «botones arriba»). En
-// la app ese slot vive en `AppHeader`, que aquí no se monta; se simula creando
-// el contenedor en `document.body` antes de cada render. Las aserciones buscan
-// los botones en el documento (no en el contenedor del asistente).
-beforeEach(() => {
-  const slot = document.createElement("div");
-  slot.id = HEADER_ACTIONS_SLOT_ID;
-  document.body.appendChild(slot);
-});
-
+// asistente renderiza sus botones Guardar/Cancelar en una barra de acciones
+// dentro de su propia zona de trabajo (arriba de las pestañas), ya NO en la
+// topbar del panel. Las aserciones los buscan en el árbol renderizado.
 afterEach(() => {
   cleanup();
-  document.getElementById(HEADER_ACTIONS_SLOT_ID)?.remove();
   // El título es un store en memoria: se limpia para no filtrar entre pruebas.
   setPageTitle(null);
   vi.clearAllMocks();
@@ -162,11 +154,10 @@ describe("ModuleWizard — rediseño de secciones (fase 1)", () => {
       screen.getByRole("navigation", { name: "Secciones del asistente" }),
     ).toBeInTheDocument();
 
-    // La acción primaria de guardar está PORTEADA al slot de la topbar y es
-    // visible desde el primer montaje (se busca en el documento).
-    const slot = document.getElementById(HEADER_ACTIONS_SLOT_ID)!;
-    expect(within(slot).getByRole("button", { name: "Guardar cambios" })).toBeInTheDocument();
-    expect(within(slot).getByRole("button", { name: "Cancelar" })).toBeInTheDocument();
+    // La acción primaria de guardar vive en la barra de acciones del asistente
+    // (arriba de las pestañas) y es visible desde el primer montaje.
+    expect(screen.getByRole("button", { name: "Guardar cambios" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancelar" })).toBeInTheDocument();
   });
 
   it("al guardar con una sección inválida indica cuál corregir y no llama a la mutación", () => {

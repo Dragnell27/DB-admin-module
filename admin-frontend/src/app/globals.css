@@ -33,11 +33,13 @@
   --popover: #ffffff;
   --popover-foreground: #0b0f1e;
 
-  /* Botón primario azul identitario con texto blanco (acento memorable). */
-  --primary: #1d4ed8; /* azul profundo; blanco encima 6.28:1 (AA) */
+  /* Botón primario del design system en CLARO: superficie oscura con texto
+     claro (inverso del fondo). El azul NO es color de botón, es acento (links,
+     foco). Texto blanco sobre #0b0f1e = 18.1:1 (AAA). */
+  --primary: #0b0f1e;
   --primary-foreground: #ffffff;
-  --primary-hover: #1e40af; /* un paso más oscuro al pasar el cursor */
-  --primary-active: #1a3aa0; /* presionado */
+  --primary-hover: #1b2338; /* un paso más claro al pasar el cursor */
+  --primary-active: #232d47; /* presionado */
 
   --secondary: #eef2f8;
   --secondary-foreground: #1f2a44; /* 10.6:1 sobre secondary */
@@ -105,10 +107,13 @@
   --popover: #1a2236; /* superficie elevada (aclarado desde #161d31) */
   --popover-foreground: #f8fafc;
 
-  --primary: #2563eb; /* botón primario AZUL identitario; blanco encima 5.17:1 (AA) */
-  --primary-foreground: #ffffff;
-  --primary-hover: #357ae8; /* más claro al pasar el cursor (4.12:1, AA) */
-  --primary-active: #1d4ed8; /* presionado (6.70:1) */
+  /* Botón primario del design system en OSCURO: superficie clara con texto
+     oscuro (botón claro, texto oscuro — el patrón original del panel). El azul
+     queda como acento, no como botón. #0b0f1e sobre #f1f5f9 = 17.4:1 (AAA). */
+  --primary: #f1f5f9;
+  --primary-foreground: #0b0f1e;
+  --primary-hover: #e2e8f0; /* un paso más tenue al pasar el cursor */
+  --primary-active: #cbd5e1; /* presionado */
 
   --secondary: #1b2338;
   --secondary-foreground: #e2e8f0;

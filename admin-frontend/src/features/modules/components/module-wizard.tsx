@@ -24,7 +24,6 @@
  * seguridad real la aplica el backend.
  */
 import * as React from "react";
-import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, Circle, Loader2 } from "lucide-react";
 
@@ -33,7 +32,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { FeedbackBanner } from "@/components/feedback-banner";
 import { cn } from "@/lib/utils";
 import { toast } from "@/lib/use-toast";
-import { usePageTitle, useHeaderActionsSlot } from "@/lib/page-chrome";
+import { usePageTitle } from "@/lib/page-chrome";
 import type { ApiError } from "@/lib/api-client";
 import {
   useCreateModuleDef,
@@ -115,8 +114,6 @@ export function ModuleWizard({ initial, editSlug, title }: ModuleWizardProps) {
   // El título de la vista se declara en la TOPBAR (bloque «título en header»):
   // la topbar renderiza el único <h1>; el asistente ya no lo pinta en el cuerpo.
   usePageTitle(title ?? null);
-  // Slot de la topbar donde se portean las acciones Guardar/Cancelar.
-  const headerSlot = useHeaderActionsSlot();
   const [state, setState] = React.useState<WizardState>(
     initial ?? emptyWizardState(),
   );
@@ -278,37 +275,34 @@ export function ModuleWizard({ initial, editSlug, title }: ModuleWizardProps) {
           arriba»): siempre visibles, conservan sus handlers, labels, spinner y
           estado `disabled`. Si el slot aún no existe (SSR / primer render) no se
           portea; un efecto re-renderiza al resolverlo. */}
-      {headerSlot
-        ? createPortal(
-            <>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => router.push("/module-defs")}
-              >
-                Cancelar
-              </Button>
-              <Button type="button" size="sm" onClick={save} disabled={mut.isPending}>
-                {mut.isPending ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                    Guardando...
-                  </>
-                ) : isEdit ? (
-                  "Guardar cambios"
-                ) : (
-                  "Crear módulo"
-                )}
-              </Button>
-            </>,
-            headerSlot,
-          )
-        : null}
-
-      {/* CABECERA no desplazable: pestañas de secciones (el título vive en la
-          topbar del panel, no aquí). */}
+      {/* CABECERA no desplazable: barra de acciones del asistente + pestañas de
+          secciones (el título vive en la topbar del panel). Los botones
+          Guardar/Cancelar van AQUÍ, en la zona de trabajo del asistente (no en
+          la topbar global), alineados a la derecha sobre las pestañas. */}
       <div className="shrink-0">
+        {/* Barra de acciones: Cancelar / Guardar, arriba de las pestañas. */}
+        <div className="mb-3 flex items-center justify-end gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => router.push("/module-defs")}
+          >
+            Cancelar
+          </Button>
+          <Button type="button" size="sm" onClick={save} disabled={mut.isPending}>
+            {mut.isPending ? (
+              <>
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                Guardando...
+              </>
+            ) : isEdit ? (
+              "Guardar cambios"
+            ) : (
+              "Crear módulo"
+            )}
+          </Button>
+        </div>
         {/* Barra de secciones HORIZONTAL: pestañas con navegación libre e
             indicador de estado por sección. Antes era una columna lateral que
             robaba ancho; ahora el área de trabajo ocupa todo el ancho. Ya NO

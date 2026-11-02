@@ -23,7 +23,7 @@ import { LogoutButton } from "@/components/logout-button";
 import { CountrySelector } from "@/components/country-selector";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { showsCountrySelector } from "@/lib/ott-routes";
-import { usePageTitleValue, HEADER_ACTIONS_SLOT_ID } from "@/lib/page-chrome";
+import { usePageTitleValue } from "@/lib/page-chrome";
 import {
   getCollapsed,
   subscribeCollapsed,
@@ -114,10 +114,6 @@ export function AppHeader() {
       </div>
 
       <div className="flex items-center gap-4">
-        {/* Slot de ACCIONES de la vista (p. ej. Guardar/Cancelar del constructor
-            de módulos). Las vistas portean aquí sus botones; vacío no ocupa. */}
-        <div id={HEADER_ACTIONS_SLOT_ID} className="flex items-center gap-2" />
-
         {/* Selector de país: solo en recursos OTT por país. */}
         {showCountry ? <CountrySelector /> : null}
 

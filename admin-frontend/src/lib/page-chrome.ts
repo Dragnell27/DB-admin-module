@@ -14,14 +14,6 @@
  */
 import * as React from "react";
 
-/**
- * `id` del contenedor de la topbar donde las vistas inyectan sus ACCIONES de
- * cabecera (p. ej. los botones Guardar/Cancelar del constructor de módulos) vía
- * `createPortal`. La topbar renderiza el `<div>` con este id; una vista que
- * quiera poner botones arriba portea su contenido a él con `useHeaderActions`.
- */
-export const HEADER_ACTIONS_SLOT_ID = "page-header-actions-slot";
-
 type Listener = () => void;
 
 const listeners = new Set<Listener>();
@@ -93,24 +85,4 @@ export function usePageTitle(title: string | null): void {
       }
     };
   }, [title]);
-}
-
-/**
- * Resuelve el nodo del DOM del slot de acciones de la topbar
- * (`HEADER_ACTIONS_SLOT_ID`) tras montar en el cliente. Devuelve `null` en el
- * servidor y en el primer render (el slot aún no existe / no hay DOM), lo que
- * evita portear durante SSR. Cada vista que quiera botones en la topbar hace:
- *
- *   const slot = useHeaderActionsSlot();
- *   return slot ? createPortal(<>...botones...</>, slot) : null;
- *
- * El portal mantiene los handlers y el estado del componente de la vista; solo
- * cambia DÓNDE se pintan los botones (en la topbar, siempre visibles).
- */
-export function useHeaderActionsSlot(): HTMLElement | null {
-  const [slot, setSlot] = React.useState<HTMLElement | null>(null);
-  React.useEffect(() => {
-    setSlot(document.getElementById(HEADER_ACTIONS_SLOT_ID));
-  }, []);
-  return slot;
 }
