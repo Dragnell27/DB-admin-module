@@ -16,7 +16,6 @@
  */
 import * as React from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
 import { Pencil, Plus, Trash2, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -30,11 +29,13 @@ import {
 } from "@/components/ui/table";
 import { FeedbackBanner } from "@/components/feedback-banner";
 import { toast } from "@/lib/use-toast";
+import { ConfirmActionDialog } from "@/features/modules/components/confirm-action-dialog";
 import { getCountry, subscribeCountry } from "@/lib/country";
 import { usePermissions } from "@/lib/use-permissions";
 import { can } from "@/lib/permissions";
 import { useRoles, useDeleteRole, type Role } from "@/features/roles/hooks";
 import { usePageTitle } from "@/lib/page-chrome";
+import { RolesSuccessToast } from "./roles-success-toast";
 
 /** Lee de forma reactiva (y SSR-safe) el país seleccionado en el selector. */
 function useSelectedCountry(): string {
@@ -43,32 +44,6 @@ function useSelectedCountry(): string {
     () => getCountry() ?? "",
     () => "",
   );
-}
-
-/**
- * Éxito tras crear/editar: las páginas de formulario redirigen aquí con
- * `?created=1`/`?updated=1`. Dispara un TOAST de éxito (no un banner inline, que
- * quedaba fuera de pantalla si la lista estaba scrolleada) y limpia el parámetro
- * con `router.replace`. Usa `useSearchParams`, por lo que se envuelve en
- * <Suspense> en el consumidor. No renderiza nada.
- */
-function RolesSuccessToast() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const created = searchParams.get("created") === "1";
-  const updated = searchParams.get("updated") === "1";
-
-  React.useEffect(() => {
-    if (!created && !updated) {
-      return;
-    }
-    toast.success(
-      created ? "Rol creado correctamente." : "Rol actualizado correctamente.",
-    );
-    router.replace("/roles");
-  }, [created, updated, router]);
-
-  return null;
 }
 
 export default function RolesPage() {
@@ -81,35 +56,13 @@ export default function RolesPage() {
   const { data, isLoading, isError, error } = useRoles();
   const deleteRole = useDeleteRole();
 
-  const [deletingId, setDeletingId] = React.useState<string | null>(null);
+  // Flujo de borrado en dos pasos (espejo de Conexiones/Módulos): el botón
+  // "Eliminar" guarda el rol pendiente y abre el `ConfirmActionDialog`; el DELETE
+  // solo se dispara al Confirmar. Se guarda el `Role` completo para mostrar su
+  // nombre en el diálogo y conservar el `id` del DELETE.
+  const [pendingDelete, setPendingDelete] = React.useState<Role | null>(null);
 
   const roles = data?.items ?? [];
-
-  const handleDelete = React.useCallback(
-    (role: Role) => {
-      setDeletingId(role.id);
-      deleteRole.mutate(role.id, {
-        // El error de eliminar se muestra como TOAST flotante (siempre visible
-        // sin importar el scroll de la lista), no como banner inline.
-        onError: (apiError) => {
-          if (apiError.status === 409 || apiError.errorCode === "ROLE_ASSIGNED") {
-            toast.error(
-              apiError.message ??
-                "No se puede eliminar el rol porque está asignado a uno o más usuarios.",
-            );
-          } else {
-            toast.error(
-              apiError.message ?? "No se pudo eliminar el rol. Intenta de nuevo.",
-            );
-          }
-        },
-        onSettled: () => {
-          setDeletingId(null);
-        },
-      });
-    },
-    [deleteRole],
-  );
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-6">
@@ -182,18 +135,10 @@ export default function RolesPage() {
                           type="button"
                           variant="destructive"
                           size="sm"
-                          disabled={deleteRole.isPending && deletingId === role.id}
-                          onClick={() => handleDelete(role)}
+                          onClick={() => setPendingDelete(role)}
                           aria-label={`Eliminar ${role.name}`}
                         >
-                          {deleteRole.isPending && deletingId === role.id ? (
-                            <Loader2
-                              className="size-4 animate-spin"
-                              aria-hidden="true"
-                            />
-                          ) : (
-                            <Trash2 aria-hidden="true" />
-                          )}
+                          <Trash2 aria-hidden="true" />
                           Eliminar
                         </Button>
                       ) : null}
@@ -205,6 +150,42 @@ export default function RolesPage() {
           </Table>
         </div>
       )}
+
+      {pendingDelete ? (
+        <ConfirmActionDialog
+          open
+          label={`Eliminar rol "${pendingDelete.name}"`}
+          isPending={deleteRole.isPending}
+          onConfirm={() =>
+            deleteRole.mutate(pendingDelete.id, {
+              // Tras DELETE 200 se cierra el modal (el hook ya invalidó los
+              // listados en su `onSuccess` interno).
+              onSuccess: () => setPendingDelete(null),
+              // El error de eliminar se muestra como TOAST flotante (siempre
+              // visible sin importar el scroll de la lista), no por el canal de
+              // error del diálogo: se cierra el modal para que el toast se vea.
+              onError: (apiError) => {
+                if (
+                  apiError.status === 409 ||
+                  apiError.errorCode === "ROLE_ASSIGNED"
+                ) {
+                  toast.error(
+                    apiError.message ??
+                      "No se puede eliminar el rol porque está asignado a uno o más usuarios.",
+                  );
+                } else {
+                  toast.error(
+                    apiError.message ??
+                      "No se pudo eliminar el rol. Intenta de nuevo.",
+                  );
+                }
+                setPendingDelete(null);
+              },
+            })
+          }
+          onCancel={() => setPendingDelete(null)}
+        />
+      ) : null}
     </div>
   );
 }
