@@ -36,9 +36,9 @@ import { useToast } from "@/lib/use-toast";
  * toasts se vean nativos (mismos tokens del tema oscuro, sin hex crudo).
  */
 const toneStyles: Readonly<Record<ToastTone, string>> = {
-  success: "border-emerald-500/50 bg-emerald-500/10 text-emerald-400",
+  success: "border-emerald-500/50 bg-emerald-500/10 text-ok-text",
   error: "border-destructive/50 bg-destructive/10 text-destructive",
-  warning: "border-amber-500/50 bg-amber-500/10 text-amber-400",
+  warning: "border-amber-500/50 bg-amber-500/10 text-warn-text",
 };
 const toneIcons: Readonly<Record<ToastTone, LucideIcon>> = {
   success: CheckCircle2,

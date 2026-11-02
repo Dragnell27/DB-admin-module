@@ -36,7 +36,7 @@ describe("Customers FeedbackBanner", () => {
 
     const banner = screen.getByRole("alert");
     expect(banner).toHaveTextContent("No se pudieron cargar los módulos");
-    expect(banner.className).toContain("text-amber-400");
+    expect(banner.className).toContain("text-warn-text");
   });
 
   it("no muestra el botón de cierre si no se provee onDismiss", () => {

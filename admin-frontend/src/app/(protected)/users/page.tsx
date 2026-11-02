@@ -147,7 +147,7 @@ export default function UsersPage() {
                     <span
                       className={
                         user.isActive
-                          ? "inline-flex items-center rounded-full border border-emerald-500/50 bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-400"
+                          ? "inline-flex items-center rounded-full border border-ok-text/40 bg-ok-text/10 px-2 py-0.5 text-xs font-medium text-ok-text"
                           : "inline-flex items-center rounded-full border border-border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground"
                       }
                     >

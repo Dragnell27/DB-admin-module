@@ -270,7 +270,7 @@ export function AuditTable() {
               className={
                 isError
                   ? "inline-flex items-center rounded-md bg-destructive/15 px-2 py-0.5 text-xs font-medium text-destructive"
-                  : "inline-flex items-center rounded-md bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-400"
+                  : "inline-flex items-center rounded-md bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-ok-text"
               }
             >
               {isError ? "Error" : "Éxito"}

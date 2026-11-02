@@ -52,6 +52,7 @@ import {
   type ColumnField,
 } from "@/features/modules/components/action-form-dialog";
 import { ConfirmActionDialog } from "@/features/modules/components/confirm-action-dialog";
+import { safeModuleErrorMessage } from "@/features/modules/lib/error-message";
 
 const DEFAULT_RECORDS_PER_PAGE = 25;
 
@@ -1524,7 +1525,7 @@ export function ModuleView({ slug }: ModuleViewProps) {
       {isError ? (
         <FeedbackBanner
           tone="error"
-          message={error?.message ?? "No se pudieron cargar los datos del módulo."}
+          message={safeModuleErrorMessage(error)}
         />
       ) : null}
 

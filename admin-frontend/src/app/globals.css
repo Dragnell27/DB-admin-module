@@ -197,6 +197,8 @@
   --color-destructive-hover: var(--destructive-hover);
   --color-destructive-active: var(--destructive-active);
   --color-destructive-text: var(--destructive-text);
+  --color-ok-text: var(--ok-text);
+  --color-warn-text: var(--warn-text);
   --color-border-soft: var(--border-soft);
   --color-border: var(--border);
   --color-input: var(--input);
