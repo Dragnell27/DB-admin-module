@@ -1,19 +1,16 @@
 // @vitest-environment jsdom
 
 // Prueba de componente del rediseño del asistente de módulos (`ModuleWizard`).
-// Verifica el modelo de ACORDEÓN de secciones apiladas (navegación por colapso)
-// SIN debilitar el comportamiento preservado:
-//   - Todas las secciones están presentes a la vez; cada encabezado es un
-//     <button> con `aria-expanded` que expande/contrae su panel.
-//   - La primera sección («Origen y conexión») arranca abierta; el resto cerrado.
+// Verifica el NUEVO layout de pestañas de secciones en barra SUPERIOR + área de
+// trabajo a todo el ancho SIN debilitar el comportamiento preservado:
+//   - Navegación LIBRE entre secciones (las pestañas cambian el área).
 //   - Los switches de columna conservan la invariante PK ⇒ Editable off/disabled.
-//   - Guardar produce el MISMO `toDefinitionInput(state)` y llama a la mutación.
-//   - Al guardar con una sección inválida, se AUTO-EXPANDE la primera inválida y
-//     se muestra el aviso de cuál corregir.
+//   - Guardar produce el MISMO `toDefinitionInput(state)` y llama a la mutación
+//     existente (equivalencia de payload con la versión previa del stepper).
 
 import "@testing-library/jest-dom/vitest";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 
 import { defaultColumn, emptyWizardState, toDefinitionInput, type WizardState } from "@/features/modules/schema";
 import { getPageTitle, setPageTitle } from "@/lib/page-chrome";
@@ -44,17 +41,16 @@ vi.mock("@/features/connections/hooks", () => ({
 
 import { ModuleWizard } from "@/features/modules/components/module-wizard";
 
+// La topbar del panel expone un slot (`HEADER_ACTIONS_SLOT_ID`) donde el
+// asistente renderiza sus botones Guardar/Cancelar en una barra de acciones
+// dentro de su propia zona de trabajo (arriba de las pestañas), ya NO en la
+// topbar del panel. Las aserciones los buscan en el árbol renderizado.
 afterEach(() => {
   cleanup();
   // El título es un store en memoria: se limpia para no filtrar entre pruebas.
   setPageTitle(null);
   vi.clearAllMocks();
 });
-
-/** Encabezado (botón de toggle) de una sección por su título. */
-function sectionHeader(title: RegExp) {
-  return screen.getByRole("button", { name: title });
-}
 
 /**
  * Estado de edición VÁLIDO en todas las secciones: slug/nombre/plantilla,
@@ -89,36 +85,39 @@ function validEditState(): WizardState {
   };
 }
 
-describe("ModuleWizard — acordeón de secciones (navegación por colapso)", () => {
-  it("apila todas las secciones; la primera abierta y el resto cerradas", () => {
+describe("ModuleWizard — rediseño de secciones (fase 1)", () => {
+  it("navega libremente entre secciones desde la barra lateral", () => {
     render(<ModuleWizard initial={validEditState()} editSlug="facturas" />);
 
-    // Los cuatro encabezados existen a la vez (acordeón, no pestañas).
-    expect(sectionHeader(/Origen y conexión/)).toHaveAttribute("aria-expanded", "true");
-    expect(sectionHeader(/Tablas y relaciones/)).toHaveAttribute("aria-expanded", "false");
-    expect(sectionHeader(/Columnas/)).toHaveAttribute("aria-expanded", "false");
-    expect(sectionHeader(/Acciones/)).toHaveAttribute("aria-expanded", "false");
-  });
+    const nav = screen.getByRole("navigation", { name: "Secciones del asistente" });
+    // El nombre de sección ya NO se duplica en un H2 del área de trabajo: la
+    // sección activa se identifica por la PESTAÑA activa (aria-current="step").
+    // La sección inicial es "Origen y conexión".
+    expect(within(nav).getByRole("button", { name: /Origen y conexión/ })).toHaveAttribute(
+      "aria-current",
+      "step",
+    );
 
-  it("expande y contrae una sección al pulsar su encabezado", () => {
-    render(<ModuleWizard initial={validEditState()} editSlug="facturas" />);
+    // Saltar directamente a "Columnas" sin pasar por un "Siguiente" forzado.
+    fireEvent.click(within(nav).getByRole("button", { name: /Columnas/ }));
+    expect(within(nav).getByRole("button", { name: /Columnas/ })).toHaveAttribute(
+      "aria-current",
+      "step",
+    );
 
-    const columnas = sectionHeader(/Columnas/);
-    // Cerrada de inicio; al pulsar se abre (no exclusivo: la primera sigue abierta).
-    fireEvent.click(columnas);
-    expect(sectionHeader(/Columnas/)).toHaveAttribute("aria-expanded", "true");
-    expect(sectionHeader(/Origen y conexión/)).toHaveAttribute("aria-expanded", "true");
-
-    // Pulsar de nuevo la contrae.
-    fireEvent.click(sectionHeader(/Columnas/));
-    expect(sectionHeader(/Columnas/)).toHaveAttribute("aria-expanded", "false");
+    // Y volver a "Tablas y relaciones".
+    fireEvent.click(within(nav).getByRole("button", { name: /Tablas y relaciones/ }));
+    expect(within(nav).getByRole("button", { name: /Tablas y relaciones/ })).toHaveAttribute(
+      "aria-current",
+      "step",
+    );
   });
 
   it("marca llave primaria y fuerza Editable off + deshabilitado (invariante PK)", () => {
     render(<ModuleWizard initial={validEditState()} editSlug="facturas" />);
 
-    // Abrir la sección Columnas para acceder a sus switches.
-    fireEvent.click(sectionHeader(/Columnas/));
+    const nav = screen.getByRole("navigation", { name: "Secciones del asistente" });
+    fireEvent.click(within(nav).getByRole("button", { name: /Columnas/ }));
 
     // La columna "monto" (índice 1) empieza editable y no-PK.
     const pkMonto = screen.getByLabelText("Llave primaria", { selector: `#w_col_pk_1` });
@@ -143,32 +142,42 @@ describe("ModuleWizard — acordeón de secciones (navegación por colapso)", ()
     expect(updateMutate.mock.calls[0][0]).toEqual(toDefinitionInput(initial));
   });
 
-  it("declara el título en el store de la topbar y mantiene las acciones arriba", () => {
+  it("declara el título en el store de la topbar y portea la acción de guardar", () => {
     render(<ModuleWizard initial={validEditState()} editSlug="facturas" title="Editar módulo · Facturas" />);
 
     // TÍTULO: ya no se pinta un <h1> en el cuerpo del asistente; se publica en
     // el store que la topbar del panel renderiza.
     expect(getPageTitle()).toBe("Editar módulo · Facturas");
 
-    // La barra de acciones (arriba del acordeón) es visible desde el montaje.
+    // Las pestañas de secciones siguen en la cabecera del asistente.
+    expect(
+      screen.getByRole("navigation", { name: "Secciones del asistente" }),
+    ).toBeInTheDocument();
+
+    // La acción primaria de guardar vive en la barra de acciones del asistente
+    // (arriba de las pestañas) y es visible desde el primer montaje.
     expect(screen.getByRole("button", { name: "Guardar cambios" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cancelar" })).toBeInTheDocument();
   });
 
-  it("al guardar con una sección inválida la auto-expande e indica cuál corregir", () => {
+  it("al guardar con una sección inválida indica cuál corregir y no llama a la mutación", () => {
     const invalid = { ...validEditState(), name: "" }; // "Origen y conexión" inválida.
     render(<ModuleWizard initial={invalid} editSlug="facturas" />);
 
-    // Contraer «Origen y conexión» para comprobar que el guardado la reabre.
-    fireEvent.click(sectionHeader(/Origen y conexión/));
-    expect(sectionHeader(/Origen y conexión/)).toHaveAttribute("aria-expanded", "false");
+    // Ir a otra sección para comprobar que el guardado reconduce a la inválida.
+    const nav = screen.getByRole("navigation", { name: "Secciones del asistente" });
+    fireEvent.click(within(nav).getByRole("button", { name: /Columnas/ }));
 
     fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
 
-    // No se guarda y se avisa cuál sección revisar.
     expect(updateMutate).not.toHaveBeenCalled();
-    expect(screen.getByText(/Revisa la sección «Origen y conexión»/)).toBeInTheDocument();
-    // La sección inválida queda AUTO-EXPANDIDA.
-    expect(sectionHeader(/Origen y conexión/)).toHaveAttribute("aria-expanded", "true");
+    expect(
+      screen.getByText(/Revisa la sección «Origen y conexión»/),
+    ).toBeInTheDocument();
+    // El área de trabajo vuelve a la sección inválida: su pestaña queda activa.
+    expect(within(nav).getByRole("button", { name: /Origen y conexión/ })).toHaveAttribute(
+      "aria-current",
+      "step",
+    );
   });
 });

@@ -2,16 +2,14 @@
 
 /**
  * Asistente de creación/edición de un módulo del constructor (module-builder,
- * tareas 13.1, 13.2). Rediseño de UX (navegación por COLAPSO): en vez de una
- * BARRA DE PESTAÑAS horizontal que muestra UNA sección a la vez, las cuatro
- * secciones se apilan como un ACORDEÓN (todas presentes, cada una colapsable).
- * Cada encabezado muestra el estado de validez (icono completa/pendiente) a la
- * izquierda y un RESUMEN legible a la derecha cuando está cerrada (conteos
- * derivados del WizardState). El acordeón es NO EXCLUSIVO (varias secciones
- * abiertas a la vez): en formularios largos conviene poder comparar secciones y
- * no perder el foco al abrir otra. El estado de apertura se recuerda dentro de
- * la sesión de edición. La BARRA DE ACCIONES (Cancelar / Guardar) se mantiene
- * ARRIBA, sobre el acordeón, siempre visible.
+ * tareas 13.1, 13.2). Rediseño de UX (fase 1 + refinamiento): en vez de un
+ * stepper lineal de cuatro pasos con botón «Siguiente» forzado, presenta una
+ * BARRA DE SECCIONES HORIZONTAL SUPERIOR (pestañas) + ÁREA DE TRABAJO a todo lo
+ * ancho, con navegación LIBRE. Mover la navegación arriba (en vez de una
+ * columna lateral) libera el ancho completo para los datos. Cada sección
+ * muestra un indicador de estado (completa / pendiente) derivado de la MISMA
+ * validación por paso de antes, ahora expresada por sección sin cambiar qué
+ * cuenta como válido.
  *
  * Secciones:
  *   1. Origen y conexión (slug kebab-case + nombre + plantilla + variables).
@@ -19,11 +17,10 @@
  *   3. Columnas (campo, etiqueta, orden, formato; visible/PK/editable).
  *   4. Acciones (CRUD/personalizadas con su operación SQL).
  *
- * Al guardar valida TODAS las secciones y, si alguna falla, AUTO-EXPANDE la
- * PRIMERA inválida y dice CUÁL corregir (sin cambiar las reglas de validez por
- * sección). El pago útil (`toDefinitionInput`) y las reglas de validez son
+ * Al guardar valida TODAS las secciones y, si alguna falla, indica CUÁL corregir
+ * y la abre. El pago útil (`toDefinitionInput`) y las reglas de validez son
  * equivalentes en comportamiento a la versión anterior. Un slug duplicado se
- * muestra como toast (E409). Tema claro/oscuro, con primitivas del proyecto. La
+ * muestra como banner (E409). Tema oscuro, con primitivas del proyecto. La
  * seguridad real la aplica el backend.
  */
 import * as React from "react";
@@ -31,8 +28,9 @@ import { useRouter } from "next/navigation";
 import { CheckCircle2, Circle, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { CollapsibleRow } from "@/components/ui/collapsible-row";
+import { Card, CardContent } from "@/components/ui/card";
 import { FeedbackBanner } from "@/components/feedback-banner";
+import { cn } from "@/lib/utils";
 import { toast } from "@/lib/use-toast";
 import { usePageTitle } from "@/lib/page-chrome";
 import type { ApiError } from "@/lib/api-client";
@@ -72,7 +70,7 @@ interface SectionMeta {
   readonly description: string;
 }
 
-/** Orden y metadatos de las secciones del acordeón. */
+/** Orden y metadatos de las secciones (pestañas de la barra superior). */
 const SECTIONS: readonly SectionMeta[] = [
   { id: "origin", title: "Origen y conexión", description: "Nombre, identificador y conexión del módulo." },
   { id: "tables", title: "Tablas y relaciones", description: "Tabla principal, foráneas y claves foráneas." },
@@ -91,6 +89,8 @@ interface SectionCheck {
  * Función PURA (sin React ni DOM) para poder unit-testear ambas ramas:
  *   - `E409` (slug duplicado) → mensaje específico en español.
  *   - cualquier otro → el mensaje del backend o el genérico de respaldo.
+ * Se extrae del IIFE anterior sin cambiar la lógica: solo cambia la SUPERFICIE
+ * de render (antes banner inline, ahora `toast.error`).
  */
 export function deriveSaveErrorMessage(err: ApiError | undefined): string {
   const code = (err as { errorCode?: string } | undefined)?.errorCode;
@@ -98,34 +98,6 @@ export function deriveSaveErrorMessage(err: ApiError | undefined): string {
     return "El identificador del módulo ya está en uso. Elige otro slug.";
   }
   return err?.message ?? "No se pudo guardar el módulo.";
-}
-
-/**
- * Resumen legible de una sección para mostrar en su encabezado cuando interesa
- * el CONTENIDO (tablas/columnas/acciones). Función pura sobre el WizardState:
- *   - tables   → «N tablas · N relaciones».
- *   - columns  → «N columnas».
- *   - actions  → «N acciones».
- * La sección «origin» usa el estado de validez (completo/incompleto), no un
- * conteo, así que no tiene resumen de conteo aquí.
- */
-export function sectionSummary(id: SectionId, state: WizardState): string | null {
-  if (id === "tables") {
-    const tableCount = (state.pgTable.trim() !== "" ? 1 : 0) + state.foreignTables.filter((t) => t.trim() !== "").length;
-    const relCount = state.relationships.length;
-    const tablesLabel = `${tableCount} ${tableCount === 1 ? "tabla" : "tablas"}`;
-    const relLabel = `${relCount} ${relCount === 1 ? "relación" : "relaciones"}`;
-    return `${tablesLabel} · ${relLabel}`;
-  }
-  if (id === "columns") {
-    const n = state.columns.length;
-    return `${n} ${n === 1 ? "columna" : "columnas"}`;
-  }
-  if (id === "actions") {
-    const n = state.actions.length;
-    return `${n} ${n === 1 ? "acción" : "acciones"}`;
-  }
-  return null;
 }
 
 export interface ModuleWizardProps {
@@ -145,16 +117,7 @@ export function ModuleWizard({ initial, editSlug, title }: ModuleWizardProps) {
   const [state, setState] = React.useState<WizardState>(
     initial ?? emptyWizardState(),
   );
-  // Estado de apertura por sección (acordeón NO exclusivo: varias abiertas a la
-  // vez). Al montar (crear o editar) se abre la primera sección, «Origen y
-  // conexión»; el resto arranca cerrado. Se RECUERDA durante la sesión de
-  // edición (vive mientras el componente esté montado).
-  const [openSections, setOpenSections] = React.useState<Record<SectionId, boolean>>({
-    origin: true,
-    tables: false,
-    columns: false,
-    actions: false,
-  });
+  const [active, setActive] = React.useState<SectionId>("origin");
   const [saveAttempted, setSaveAttempted] = React.useState(false);
 
   const createMut = useCreateModuleDef();
@@ -169,10 +132,6 @@ export function ModuleWizard({ initial, editSlug, title }: ModuleWizardProps) {
 
   const patch = React.useCallback((p: Partial<WizardState>) => {
     setState((prev) => ({ ...prev, ...p }));
-  }, []);
-
-  const toggleSection = React.useCallback((id: SectionId) => {
-    setOpenSections((prev) => ({ ...prev, [id]: !prev[id] }));
   }, []);
 
   /**
@@ -274,7 +233,7 @@ export function ModuleWizard({ initial, editSlug, title }: ModuleWizardProps) {
     [state, isEdit, selectedTemplate],
   );
 
-  // Estado por sección para los indicadores de validez del acordeón.
+  // Estado por sección para los indicadores de las pestañas superiores.
   const checks = React.useMemo(() => {
     const map = {} as Record<SectionId, SectionCheck>;
     for (const s of SECTIONS) {
@@ -283,13 +242,15 @@ export function ModuleWizard({ initial, editSlug, title }: ModuleWizardProps) {
     return map;
   }, [checkSection]);
 
+  const activeError = saveAttempted ? checks[active].error : null;
+
   const save = () => {
     setSaveAttempted(true);
-    // Valida TODAS las secciones; si alguna falla, AUTO-EXPANDE la PRIMERA
-    // inválida (sin cerrar las demás) y dice CUÁL corregir.
+    // Valida TODAS las secciones; si alguna falla, lleva a la PRIMERA inválida y
+    // dice CUÁL corregir (sin cambiar las reglas de validez por sección).
     const firstInvalid = SECTIONS.find((s) => !checks[s.id].ok);
     if (firstInvalid) {
-      setOpenSections((prev) => ({ ...prev, [firstInvalid.id]: true }));
+      setActive(firstInvalid.id);
       return;
     }
     const input = toDefinitionInput(state);
@@ -302,6 +263,7 @@ export function ModuleWizard({ initial, editSlug, title }: ModuleWizardProps) {
   };
 
   const firstInvalidTitle = SECTIONS.find((s) => !checks[s.id].ok)?.title ?? null;
+  const activeMeta = SECTIONS.find((s) => s.id === active)!;
 
   return (
     // Layout de TRES ZONAS a altura completa (cabecera / cuerpo con scroll /
@@ -309,11 +271,16 @@ export function ModuleWizard({ initial, editSlug, title }: ModuleWizardProps) {
     // cabecera y el pie nunca se desplazan respecto al nav lateral de la app y
     // el scroll vive SOLO en el cuerpo.
     <div className="flex h-full min-h-0 flex-col">
-      {/* CABECERA no desplazable: barra de acciones del asistente (el título
-          vive en la topbar del panel). Los botones Guardar/Cancelar van AQUÍ,
-          en la zona de trabajo del asistente, SIEMPRE visibles sobre el
-          acordeón; no se meten dentro de ninguna sección colapsable. */}
+      {/* Acciones Guardar/Cancelar PORTEADAS a la topbar (bloque «botones
+          arriba»): siempre visibles, conservan sus handlers, labels, spinner y
+          estado `disabled`. Si el slot aún no existe (SSR / primer render) no se
+          portea; un efecto re-renderiza al resolverlo. */}
+      {/* CABECERA no desplazable: barra de acciones del asistente + pestañas de
+          secciones (el título vive en la topbar del panel). Los botones
+          Guardar/Cancelar van AQUÍ, en la zona de trabajo del asistente (no en
+          la topbar global), alineados a la derecha sobre las pestañas. */}
       <div className="shrink-0">
+        {/* Barra de acciones: Cancelar / Guardar, arriba de las pestañas. */}
         <div className="mb-3 flex items-center justify-end gap-2">
           <Button
             type="button"
@@ -336,19 +303,70 @@ export function ModuleWizard({ initial, editSlug, title }: ModuleWizardProps) {
             )}
           </Button>
         </div>
+        {/* Barra de secciones HORIZONTAL: pestañas con navegación libre e
+            indicador de estado por sección. Antes era una columna lateral que
+            robaba ancho; ahora el área de trabajo ocupa todo el ancho. Ya NO
+            necesita `sticky top-0` porque vive en esta cabecera no desplazable. */}
+        <nav
+          aria-label="Secciones del asistente"
+          className="-mx-1 overflow-x-auto border-b border-border bg-background"
+        >
+        <ol className="flex min-w-max items-stretch gap-1 px-1">
+          {SECTIONS.map((s) => {
+            const isActive = s.id === active;
+            const complete = checks[s.id].ok;
+            return (
+              <li key={s.id}>
+                <button
+                  type="button"
+                  onClick={() => setActive(s.id)}
+                  aria-current={isActive ? "step" : undefined}
+                  title={complete ? "Completa" : "Pendiente"}
+                  className={cn(
+                    "flex items-center gap-2 whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+                    isActive
+                      ? "border-primary text-foreground"
+                      : "border-transparent text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <span className="shrink-0" aria-hidden="true">
+                    {complete ? (
+                      <CheckCircle2 className="size-4 text-primary" />
+                    ) : (
+                      <Circle className="size-4 text-muted-foreground" />
+                    )}
+                  </span>
+                  <span>{s.title}</span>
+                  <span className="sr-only">{complete ? " (completa)" : " (pendiente)"}</span>
+                </button>
+              </li>
+            );
+          })}
+          </ol>
+        </nav>
       </div>
 
       {/* CUERPO: ÚNICA zona con scroll (`flex-1 min-h-0 overflow-y-auto`).
-          Contiene el selector de copiar configuración (solo al crear), el aviso
-          de sección inválida y el ACORDEÓN con todas las secciones apiladas. */}
+          Contiene el selector de copiar configuración (solo al crear), la
+          descripción de ayuda, los banners, y la tarjeta con la sección activa.
+          `pb-6` da aire al final; ya NO se usa `pb-20` porque el pie es un
+          bloque estructural, no una barra fija que pueda tapar el contenido. */}
       <div className="min-w-0 flex-1 min-h-0 space-y-4 overflow-y-auto pb-6">
         {/* Copiar configuración de otro módulo: SOLO al crear. */}
         {!isEdit ? (
           <CopyConfigPicker onCopy={(def) => setState(fromCopyableDefinition(def))} />
         ) : null}
 
-        {/* Aviso de sección inválida al intentar guardar: la primera inválida se
-            auto-expande; este banner recuerda CUÁL revisar. */}
+        <p className="text-sm text-muted-foreground">{activeMeta.description}</p>
+
+        {/* Validación CONTEXTUAL por sección: se queda INLINE junto al paso
+            que se edita (moverla a un toast perdería el contexto). El error de
+            GUARDAR, en cambio, ahora es un toast flotante. */}
+        {activeError ? <FeedbackBanner tone="error" message={activeError} /> : null}
+
+        {/* Aviso de sección inválida al intentar guardar. Antes vivía en el pie
+            (FormActionBar); al mover los botones a la topbar, el aviso se queda
+            junto al cuerpo donde el usuario está trabajando. */}
         {saveAttempted && firstInvalidTitle ? (
           <FeedbackBanner
             tone="error"
@@ -356,63 +374,24 @@ export function ModuleWizard({ initial, editSlug, title }: ModuleWizardProps) {
           />
         ) : null}
 
-        {/* Acordeón de secciones: todas apiladas, cada una colapsable. El
-            encabezado lleva el icono de validez (completa/pendiente), el título
-            y, cerrada, un resumen a la derecha. */}
-        <div className="space-y-3">
-          {SECTIONS.map((s) => {
-            const complete = checks[s.id].ok;
-            const open = openSections[s.id];
-            const summary = sectionSummary(s.id, state);
-            // Si la sección está abierta y es inválida tras intentar guardar,
-            // muestra su error contextual dentro del panel.
-            const inlineError = saveAttempted && !complete ? checks[s.id].error : null;
-            const panelId = `w_section_${s.id}`;
-            return (
-              <CollapsibleRow
-                key={s.id}
-                panelId={panelId}
-                open={open}
-                onToggle={() => toggleSection(s.id)}
-                leading={
-                  complete ? (
-                    <CheckCircle2 className="size-4 text-primary" />
-                  ) : (
-                    <Circle className="size-4 text-muted-foreground" />
-                  )
-                }
-                header={
-                  <span className="flex min-w-0 items-center gap-2">
-                    <span className="truncate text-sm font-medium text-foreground">{s.title}</span>
-                    <span className="sr-only">{complete ? " (completa)" : " (pendiente)"}</span>
-                    {!open ? (
-                      <span className="ml-auto truncate pl-2 text-xs text-muted-foreground">
-                        {summary ?? (complete ? "Completa" : "Pendiente")}
-                      </span>
-                    ) : null}
-                  </span>
-                }
-                panelClassName="space-y-4"
-              >
-                <p className="text-sm text-muted-foreground">{s.description}</p>
-                {inlineError ? <FeedbackBanner tone="error" message={inlineError} /> : null}
-                {s.id === "origin" ? (
-                  <OriginSection
-                    state={state}
-                    patch={patch}
-                    isEdit={isEdit}
-                    templates={templates ?? []}
-                    selectedTemplate={selectedTemplate}
-                  />
-                ) : null}
-                {s.id === "tables" ? <TablesSection state={state} patch={patch} /> : null}
-                {s.id === "columns" ? <ColumnsSection state={state} patch={patch} /> : null}
-                {s.id === "actions" ? <ActionsSection state={state} patch={patch} /> : null}
-              </CollapsibleRow>
-            );
-          })}
-        </div>
+        <Card>
+          <CardContent className="space-y-4 pt-6">
+            {active === "origin" ? (
+              <OriginSection
+                state={state}
+                patch={patch}
+                isEdit={isEdit}
+                templates={templates ?? []}
+                selectedTemplate={selectedTemplate}
+              />
+            ) : null}
+            {active === "tables" ? <TablesSection state={state} patch={patch} /> : null}
+            {active === "columns" ? <ColumnsSection state={state} patch={patch} /> : null}
+            {active === "actions" ? <ActionsSection state={state} patch={patch} /> : null}
+          </CardContent>
+        </Card>
       </div>
+
     </div>
   );
 }
