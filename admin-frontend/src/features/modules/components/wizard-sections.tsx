@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
+import { CollapsibleRow } from "@/components/ui/collapsible-row";
 import { FeedbackBanner } from "@/components/feedback-banner";
 import type { ApiError } from "@/lib/api-client";
 import { useModuleDef, useVisibleModules } from "@/features/modules/hooks";
@@ -87,6 +88,45 @@ function isWriteColumnAction(a: ActionFormState): boolean {
 /** Columnas que una acción de escritura puede tocar: editables y no PK. */
 function writableColumns(state: WizardState): ColumnFormState[] {
   return state.columns.filter((c) => c.editable && !c.isPrimaryKey);
+}
+
+/** Etiqueta legible del tipo de un campo de entrada (para resúmenes). */
+const FIELD_TYPE_LABEL: Record<FieldType, string> = {
+  string: "Texto",
+  number: "Número",
+  boolean: "Booleano",
+  date: "Fecha",
+};
+
+/** Etiqueta legible del origen («se llena con») de un campo (para resúmenes). */
+const FIELD_SOURCE_LABEL: Record<FieldFormState["source"], string> = {
+  input: "Captura del usuario",
+  row: "Campo de la fila",
+  constant: "Valor constante",
+  select: "Selección de lista",
+  dynamic: "Lista desde tabla",
+};
+
+/**
+ * Resumen legible de un CAMPO de acción cuando está colapsado:
+ * «<columna objetivo> · <tipo> · <se llena con>». Sin columna aún, usa un
+ * marcador. Función pura; solo presentación.
+ */
+function fieldSummary(f: FieldFormState): string {
+  const target = f.name.trim() !== "" ? f.name : "(sin columna)";
+  return `${target} · ${FIELD_TYPE_LABEL[f.type]} · ${FIELD_SOURCE_LABEL[f.source]}`;
+}
+
+/**
+ * Resumen legible de una RELACIÓN cuando está colapsada:
+ * «<tabla_hija> → <tabla_padre> · <INNER|LEFT>». Sin tablas aún, usa marcadores.
+ * Función pura; solo presentación.
+ */
+function relationshipSummary(r: RelationshipFormState): string {
+  const child = r.childTable.trim() !== "" ? r.childTable : "(hija)";
+  const parent = r.parentTable.trim() !== "" ? r.parentTable : "(padre)";
+  const join = r.joinType === "left" ? "LEFT" : "INNER";
+  return `${child} → ${parent} · ${join}`;
 }
 
 /**
@@ -643,83 +683,148 @@ function RelationshipsEditor({ state, patch }: SectionProps) {
         es la referenciada. Los JOIN solo se usan para LEER.
       </p>
       {state.relationships.map((r, i) => (
-        <div key={i} className="space-y-2 rounded-md border border-border/40 p-3">
-          <div className="grid items-end gap-2 sm:grid-cols-[1fr_1fr_120px_auto]">
-            <div className="space-y-1">
-              <Label>Tabla hija (posee FK)</Label>
-              <select className={inputClass} value={r.childTable} onChange={(e) => updateRel(i, { childTable: e.target.value })}>
-                <option value="">—</option>
-                {tables.map((t) => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-1">
-              <Label>Tabla padre (referenciada)</Label>
-              <select className={inputClass} value={r.parentTable} onChange={(e) => updateRel(i, { parentTable: e.target.value })}>
-                <option value="">—</option>
-                {tables.map((t) => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-1">
-              <Label>Tipo JOIN</Label>
-              <select className={inputClass} value={r.joinType} onChange={(e) => updateRel(i, { joinType: e.target.value as RelationshipFormState["joinType"] })}>
-                <option value="inner">INNER</option>
-                <option value="left">LEFT</option>
-              </select>
-            </div>
-            <Button type="button" variant="destructive" size="sm" onClick={() => removeRel(i)}>
+        <RelationshipRow
+          key={i}
+          index={i}
+          rel={r}
+          tables={tables}
+          onUpdateRel={(p) => updateRel(i, p)}
+          onRemove={() => removeRel(i)}
+          onUpdatePair={(pi, p) => updatePair(i, pi, p)}
+          onAddPair={() => addPair(i)}
+          onAddConstant={() => addConstant(i)}
+          onUpdateConstant={(ci, p) => updateConstant(i, ci, p)}
+          onRemoveConstant={(ci) => removeConstant(i, ci)}
+        />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Fila COLAPSABLE de una relación FK. Colapsada muestra el resumen
+ * «<tabla_hija> → <tabla_padre> · <INNER|LEFT>»; expandida edita tablas, JOIN,
+ * pares ON y condiciones constantes. Una relación NUEVA (sin tablas) arranca
+ * EXPANDIDA. Estado de colapso LOCAL; el botón de borrar vive en el encabezado.
+ * No cambia el modelo ni la serialización: solo presentación.
+ */
+function RelationshipRow({
+  index,
+  rel: r,
+  tables,
+  onUpdateRel,
+  onRemove,
+  onUpdatePair,
+  onAddPair,
+  onAddConstant,
+  onUpdateConstant,
+  onRemoveConstant,
+}: {
+  readonly index: number;
+  readonly rel: RelationshipFormState;
+  readonly tables: string[];
+  readonly onUpdateRel: (p: Partial<RelationshipFormState>) => void;
+  readonly onRemove: () => void;
+  readonly onUpdatePair: (pi: number, p: Partial<{ child: string; parent: string }>) => void;
+  readonly onAddPair: () => void;
+  readonly onAddConstant: () => void;
+  readonly onUpdateConstant: (ci: number, p: Partial<{ table: string; column: string; value: string }>) => void;
+  readonly onRemoveConstant: (ci: number) => void;
+}) {
+  const i = index;
+  const [open, setOpen] = React.useState(
+    r.childTable.trim() === "" && r.parentTable.trim() === "",
+  );
+  const panelId = `w_rel_${i}`;
+
+  return (
+    <CollapsibleRow
+      panelId={panelId}
+      open={open}
+      onToggle={() => setOpen((v) => !v)}
+      header={
+        <span className="truncate text-sm font-medium text-foreground">
+          {relationshipSummary(r)}
+        </span>
+      }
+      actions={
+        <Button type="button" variant="ghost" size="sm" onClick={onRemove} aria-label="Quitar relación">
+          <Trash2 aria-hidden="true" />
+        </Button>
+      }
+      panelClassName="space-y-2"
+    >
+      <div className="grid items-end gap-2 sm:grid-cols-[1fr_1fr_120px]">
+        <div className="space-y-1">
+          <Label>Tabla hija (posee FK)</Label>
+          <select className={inputClass} value={r.childTable} onChange={(e) => onUpdateRel({ childTable: e.target.value })}>
+            <option value="">—</option>
+            {tables.map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+        </div>
+        <div className="space-y-1">
+          <Label>Tabla padre (referenciada)</Label>
+          <select className={inputClass} value={r.parentTable} onChange={(e) => onUpdateRel({ parentTable: e.target.value })}>
+            <option value="">—</option>
+            {tables.map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+        </div>
+        <div className="space-y-1">
+          <Label>Tipo JOIN</Label>
+          <select className={inputClass} value={r.joinType} onChange={(e) => onUpdateRel({ joinType: e.target.value as RelationshipFormState["joinType"] })}>
+            <option value="inner">INNER</option>
+            <option value="left">LEFT</option>
+          </select>
+        </div>
+      </div>
+      <div className="space-y-2">
+        <Label className="text-xs">Columnas de unión (ON): fk_hijo = clave_padre</Label>
+        {r.on.map((p, pi) => (
+          <div key={pi} className="grid items-center gap-2 sm:grid-cols-[1fr_auto_1fr]">
+            <Input value={p.child} onChange={(e) => onUpdatePair(pi, { child: e.target.value })} placeholder="cliente_id" />
+            <span className="text-center text-sm text-muted-foreground">=</span>
+            <Input value={p.parent} onChange={(e) => onUpdatePair(pi, { parent: e.target.value })} placeholder="id" />
+          </div>
+        ))}
+        <Button type="button" variant="outline" size="sm" onClick={onAddPair}>
+          Agregar par ON
+        </Button>
+      </div>
+      <div className="space-y-2">
+        <Label className="text-xs">Condiciones constantes (ON): columna = valor</Label>
+        <p className="text-xs text-muted-foreground">
+          Se evalúa dentro del JOIN (ON), no en el filtro. Útil para fijar un
+          valor como <code>list_numero = 10001</code> sin descartar filas sin coincidencia.
+        </p>
+        {r.onConstants.map((c, ci) => (
+          <div key={ci} className="grid items-center gap-2 sm:grid-cols-[1fr_1fr_auto_1fr_auto]">
+            <select
+              className={inputClass}
+              value={c.table}
+              onChange={(e) => onUpdateConstant(ci, { table: e.target.value })}
+            >
+              <option value="">—</option>
+              {[r.childTable, r.parentTable].filter(Boolean).map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+            <Input value={c.column} onChange={(e) => onUpdateConstant(ci, { column: e.target.value })} placeholder="list_numero" />
+            <span className="text-center text-sm text-muted-foreground">=</span>
+            <Input value={c.value} onChange={(e) => onUpdateConstant(ci, { value: e.target.value })} placeholder="10001" />
+            <Button type="button" variant="destructive" size="sm" onClick={() => onRemoveConstant(ci)}>
               Quitar
             </Button>
           </div>
-          <div className="space-y-2">
-            <Label className="text-xs">Columnas de unión (ON): fk_hijo = clave_padre</Label>
-            {r.on.map((p, pi) => (
-              <div key={pi} className="grid items-center gap-2 sm:grid-cols-[1fr_auto_1fr]">
-                <Input value={p.child} onChange={(e) => updatePair(i, pi, { child: e.target.value })} placeholder="cliente_id" />
-                <span className="text-center text-sm text-muted-foreground">=</span>
-                <Input value={p.parent} onChange={(e) => updatePair(i, pi, { parent: e.target.value })} placeholder="id" />
-              </div>
-            ))}
-            <Button type="button" variant="outline" size="sm" onClick={() => addPair(i)}>
-              Agregar par ON
-            </Button>
-          </div>
-          <div className="space-y-2">
-            <Label className="text-xs">Condiciones constantes (ON): columna = valor</Label>
-            <p className="text-xs text-muted-foreground">
-              Se evalúa dentro del JOIN (ON), no en el filtro. Útil para fijar un
-              valor como <code>list_numero = 10001</code> sin descartar filas sin coincidencia.
-            </p>
-            {r.onConstants.map((c, ci) => (
-              <div key={ci} className="grid items-center gap-2 sm:grid-cols-[1fr_1fr_auto_1fr_auto]">
-                <select
-                  className={inputClass}
-                  value={c.table}
-                  onChange={(e) => updateConstant(i, ci, { table: e.target.value })}
-                >
-                  <option value="">—</option>
-                  {[r.childTable, r.parentTable].filter(Boolean).map((t) => (
-                    <option key={t} value={t}>{t}</option>
-                  ))}
-                </select>
-                <Input value={c.column} onChange={(e) => updateConstant(i, ci, { column: e.target.value })} placeholder="list_numero" />
-                <span className="text-center text-sm text-muted-foreground">=</span>
-                <Input value={c.value} onChange={(e) => updateConstant(i, ci, { value: e.target.value })} placeholder="10001" />
-                <Button type="button" variant="destructive" size="sm" onClick={() => removeConstant(i, ci)}>
-                  Quitar
-                </Button>
-              </div>
-            ))}
-            <Button type="button" variant="outline" size="sm" onClick={() => addConstant(i)}>
-              Agregar condición constante
-            </Button>
-          </div>
-        </div>
-      ))}
-    </div>
+        ))}
+        <Button type="button" variant="outline" size="sm" onClick={onAddConstant}>
+          Agregar condición constante
+        </Button>
+      </div>
+    </CollapsibleRow>
   );
 }
 
@@ -1727,8 +1832,88 @@ export function ActionsSection({ state, patch }: SectionProps) {
                 </Button>
               </div>
               {a.inputFields.map((f, fi) => (
-                <div key={fi} className="space-y-2 rounded-md border border-border/60 p-2">
-                  <div className="grid items-end gap-2 sm:grid-cols-[1fr_1fr_auto_auto_auto]">
+                <ActionFieldRow
+                  key={fi}
+                  index={fi}
+                  field={f}
+                  action={a}
+                  state={state}
+                  onUpdateField={(p) => updateField(ai, fi, p)}
+                  onRemoveField={() => removeField(ai, fi)}
+                  onAddOption={() => addOption(ai, fi)}
+                  onUpdateOption={(oi, p) => updateOption(ai, fi, oi, p)}
+                  onRemoveOption={(oi) => removeOption(ai, fi, oi)}
+                />
+              ))}
+            </div>
+
+            <div className="flex justify-end">
+              <Button type="button" variant="ghost" size="sm" onClick={() => removeAction(ai)}>
+                <Trash2 aria-hidden="true" /> Quitar acción
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+      {state.actions.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          Sin acciones aún. Agrega al menos una acción &quot;Listar&quot; para poder ver datos.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Fila COLAPSABLE de un CAMPO de entrada de una acción. Colapsada muestra el
+ * resumen «<columna objetivo> · <tipo> · <se llena con>»; expandida edita todos
+ * sus controles (columna/tipo/obligatorio, origen del valor, opciones estáticas
+ * o fuente dinámica). Un campo NUEVO (sin columna objetivo) arranca EXPANDIDO.
+ * Estado de colapso LOCAL; el botón de borrar vive en el encabezado. No cambia
+ * el modelo ni la serialización: solo presentación.
+ */
+function ActionFieldRow({
+  index,
+  field: f,
+  action: a,
+  state,
+  onUpdateField,
+  onRemoveField,
+  onAddOption,
+  onUpdateOption,
+  onRemoveOption,
+}: {
+  readonly index: number;
+  readonly field: FieldFormState;
+  readonly action: ActionFormState;
+  readonly state: WizardState;
+  readonly onUpdateField: (p: Partial<FieldFormState>) => void;
+  readonly onRemoveField: () => void;
+  readonly onAddOption: () => void;
+  readonly onUpdateOption: (oi: number, p: Partial<SelectOption>) => void;
+  readonly onRemoveOption: (oi: number) => void;
+}) {
+  const [open, setOpen] = React.useState(f.name.trim() === "");
+  const panelId = `w_action_field_${a.actionKey || "n"}_${index}`;
+
+  return (
+    <CollapsibleRow
+      panelId={panelId}
+      open={open}
+      onToggle={() => setOpen((v) => !v)}
+      header={
+        <span className="truncate text-sm font-medium text-foreground">
+          {fieldSummary(f)}
+        </span>
+      }
+      actions={
+        <Button type="button" variant="ghost" size="sm" onClick={onRemoveField} aria-label="Quitar campo">
+          <Trash2 aria-hidden="true" />
+        </Button>
+      }
+      panelClassName="space-y-2"
+    >
+                  <div className="grid items-end gap-2 sm:grid-cols-[1fr_1fr_auto]">
                     <div className="space-y-1">
                       <Label>Columna objetivo</Label>
                       {isWriteColumnAction(a) ? (
@@ -1741,7 +1926,7 @@ export function ActionsSection({ state, patch }: SectionProps) {
                           value={columnOptionValue(f.name, f.sourceTable ?? "")}
                           onChange={(e) => {
                             const { field, sourceTable } = parseColumnOptionValue(e.target.value);
-                            updateField(ai, fi, { name: field, sourceTable });
+                            onUpdateField({ name: field, sourceTable });
                           }}
                         >
                           <option value="" disabled>
@@ -1762,7 +1947,7 @@ export function ActionsSection({ state, patch }: SectionProps) {
                           value={columnOptionValue(f.name, f.sourceTable ?? "")}
                           onChange={(e) => {
                             const { field, sourceTable } = parseColumnOptionValue(e.target.value);
-                            updateField(ai, fi, { name: field, sourceTable });
+                            onUpdateField({ name: field, sourceTable });
                           }}
                         >
                           <option value={columnOptionValue("", "")} disabled>
@@ -1778,7 +1963,7 @@ export function ActionsSection({ state, patch }: SectionProps) {
                     </div>
                     <div className="space-y-1">
                       <Label>Tipo</Label>
-                      <select className={inputClass} value={f.type} onChange={(e) => updateField(ai, fi, { type: e.target.value as FieldType })}>
+                      <select className={inputClass} value={f.type} onChange={(e) => onUpdateField({ type: e.target.value as FieldType })}>
                         <option value="string">Texto</option>
                         <option value="number">Número</option>
                         <option value="boolean">Booleano</option>
@@ -1786,12 +1971,9 @@ export function ActionsSection({ state, patch }: SectionProps) {
                       </select>
                     </div>
                     <label className="flex items-center gap-1 pb-2 text-xs">
-                      <input type="checkbox" checked={f.required} onChange={(e) => updateField(ai, fi, { required: e.target.checked })} className="size-4" />
+                      <input type="checkbox" checked={f.required} onChange={(e) => onUpdateField({ required: e.target.checked })} className="size-4" />
                       Oblig.
                     </label>
-                    <Button type="button" variant="ghost" size="sm" onClick={() => removeField(ai, fi)} aria-label="Quitar campo">
-                      <Trash2 aria-hidden="true" />
-                    </Button>
                   </div>
 
                   {/* Origen del valor: capturado del usuario, tomado de la fila
@@ -1802,7 +1984,7 @@ export function ActionsSection({ state, patch }: SectionProps) {
                       <select
                         className={inputClass}
                         value={f.source}
-                        onChange={(e) => updateField(ai, fi, { source: e.target.value as FieldFormState["source"] })}
+                        onChange={(e) => onUpdateField({ source: e.target.value as FieldFormState["source"] })}
                       >
                         <option value="input">Captura del usuario</option>
                         {/* "Campo de la fila" NO aplica a escrituras Postgres: la
@@ -1825,7 +2007,7 @@ export function ActionsSection({ state, patch }: SectionProps) {
                           className={inputClass}
                           value={f.matchType ?? "exact"}
                           onChange={(e) =>
-                            updateField(ai, fi, {
+                            onUpdateField({
                               matchType: e.target.value === "partial" ? "partial" : "exact",
                             })
                           }
@@ -1842,7 +2024,7 @@ export function ActionsSection({ state, patch }: SectionProps) {
                         <Label>Valor constante</Label>
                         <Input
                           value={f.constValue}
-                          onChange={(e) => updateField(ai, fi, { constValue: e.target.value })}
+                          onChange={(e) => onUpdateField({ constValue: e.target.value })}
                           placeholder="p. ej. gt"
                         />
                         {/* Solo para escrituras: ocultar la columna del formulario
@@ -1852,7 +2034,7 @@ export function ActionsSection({ state, patch }: SectionProps) {
                             <input
                               type="checkbox"
                               checked={f.hidden}
-                              onChange={(e) => updateField(ai, fi, { hidden: e.target.checked })}
+                              onChange={(e) => onUpdateField({ hidden: e.target.checked })}
                               className="size-4"
                             />
                             Ocultar en el formulario
@@ -1868,7 +2050,7 @@ export function ActionsSection({ state, patch }: SectionProps) {
                           value={isKnownColumn(state, f.rowField) ? f.rowField : "__other__"}
                           onChange={(e) => {
                             const v = e.target.value;
-                            updateField(ai, fi, { rowField: v === "__other__" ? "" : v });
+                            onUpdateField({ rowField: v === "__other__" ? "" : v });
                           }}
                         >
                           {state.columns.map((c) => (
@@ -1881,7 +2063,7 @@ export function ActionsSection({ state, patch }: SectionProps) {
                         {!isKnownColumn(state, f.rowField) ? (
                           <Input
                             value={f.rowField}
-                            onChange={(e) => updateField(ai, fi, { rowField: e.target.value })}
+                            onChange={(e) => onUpdateField({ rowField: e.target.value })}
                             placeholder="nombre del campo en la fila (p. ej. id)"
                           />
                         ) : null}
@@ -1896,10 +2078,10 @@ export function ActionsSection({ state, patch }: SectionProps) {
                     <StaticOptionsEditor
                       options={f.options}
                       defaultValue={f.defaultValue}
-                      onAddOption={() => addOption(ai, fi)}
-                      onUpdateOption={(oi, p) => updateOption(ai, fi, oi, p)}
-                      onRemoveOption={(oi) => removeOption(ai, fi, oi)}
-                      onDefaultChange={(value) => updateField(ai, fi, { defaultValue: value })}
+                      onAddOption={onAddOption}
+                      onUpdateOption={onUpdateOption}
+                      onRemoveOption={onRemoveOption}
+                      onDefaultChange={(value) => onUpdateField({ defaultValue: value })}
                     />
                   ) : null}
 
@@ -1909,26 +2091,9 @@ export function ActionsSection({ state, patch }: SectionProps) {
                     <DynamicSourceEditor
                       dynamicSource={f.dynamicSource}
                       dynamicFilters={f.dynamicFilters}
-                      onPatch={(p) => updateField(ai, fi, p)}
+                      onPatch={(p) => onUpdateField(p)}
                     />
                   ) : null}
-                </div>
-              ))}
-            </div>
-
-            <div className="flex justify-end">
-              <Button type="button" variant="ghost" size="sm" onClick={() => removeAction(ai)}>
-                <Trash2 aria-hidden="true" /> Quitar acción
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      ))}
-      {state.actions.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          Sin acciones aún. Agrega al menos una acción &quot;Listar&quot; para poder ver datos.
-        </p>
-      ) : null}
-    </div>
+    </CollapsibleRow>
   );
 }

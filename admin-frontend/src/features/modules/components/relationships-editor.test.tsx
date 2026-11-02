@@ -63,9 +63,19 @@ function Harness({ initial }: { initial: WizardState }) {
   );
 }
 
+/**
+ * Expande la fila de relación (en el rediseño por colapso arranca COLAPSADA al
+ * tener tablas) pulsando su encabezado, identificado por el resumen
+ * «pagos → clientes · LEFT».
+ */
+function expandRelationshipRow() {
+  fireEvent.click(screen.getByRole("button", { name: /pagos → clientes/ }));
+}
+
 describe("RelationshipsEditor — condiciones constantes del ON", () => {
   it("añade una condición constante y la refleja en onConstants", () => {
     render(<Harness initial={multiState()} />);
+    expandRelationshipRow();
 
     // Añade una fila de condición constante.
     fireEvent.click(screen.getByRole("button", { name: "Agregar condición constante" }));
@@ -95,6 +105,7 @@ describe("RelationshipsEditor — condiciones constantes del ON", () => {
     const initial = multiState();
     initial.relationships[0].onConstants = [{ table: "clientes", column: "estado", value: "1" }];
     render(<Harness initial={initial} />);
+    expandRelationshipRow();
 
     // El valor preexistente se muestra; se elimina con el botón Quitar de su fila.
     const valueInput = screen.getByPlaceholderText("10001") as HTMLInputElement;
