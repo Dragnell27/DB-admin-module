@@ -25,38 +25,18 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import type { ModuleAction, FieldSpec, FieldType, SelectOption } from "@/features/modules/types";
+import type { ModuleAction } from "@/features/modules/types";
+import {
+  buildInitialValues,
+  buildSubmitInput,
+  getVisibleFields,
+  validateRequired,
+} from "@/features/modules/components/action-form-dialog.logic";
+import type { ColumnField } from "@/features/modules/components/action-form-dialog.logic";
 
-/**
- * Campo de un formulario GENERADO DESDE COLUMNAS (acciones de editar, Opción B).
- * Cuando `ActionFormDialog` recibe `columnFields`, construye el formulario a
- * partir de estas entradas en vez de `action.inputFields`. Un campo `readOnly`
- * (columna llave primaria o no editable) se muestra precargado y deshabilitado.
- */
-export interface ColumnField {
-  readonly field: string;
-  readonly label: string;
-  readonly type: FieldType;
-  readonly readOnly: boolean;
-  readonly required: boolean;
-  /**
-   * Si se provee, la columna objetivo tiene origen LISTA: el control se renderiza
-   * como desplegable con estas opciones (etiqueta/valor), en vez de un input.
-   */
-  readonly options?: ReadonlyArray<SelectOption>;
-  /** Valor preseleccionado del desplegable (origen lista). */
-  readonly defaultValue?: string;
-  /**
-   * Origen DINÁMICO: las opciones se están cargando del endpoint. Puramente de
-   * presentación (deshabilita el desplegable y muestra "Cargando…").
-   */
-  readonly optionsLoading?: boolean;
-  /**
-   * Origen DINÁMICO: la carga de opciones falló (502). Puramente de presentación
-   * (muestra "No se pudieron cargar las opciones").
-   */
-  readonly optionsError?: boolean;
-}
+// Reexporta el tipo (fuente única en el módulo de lógica pura) para no romper a
+// los consumidores que lo importan desde el componente.
+export type { ColumnField } from "@/features/modules/components/action-form-dialog.logic";
 
 /**
  * Clases Tailwind del desplegable de un campo "select" en tiempo de ejecución.
@@ -97,29 +77,6 @@ export interface ActionFormDialogProps {
   readonly onCancel: () => void;
 }
 
-/** Convierte el valor crudo de un control al tipo declarado del campo. */
-function coerce(field: FieldSpec, raw: string | boolean): unknown {
-  // Un campo de origen lista (ESTÁTICA "select" o DINÁMICA "dynamic") envía el
-  // VALUE elegido (string) tal cual, sin coaccionar por `type`: en select el
-  // backend compara contra opt.Value (string) y en dynamic el value es el id FK
-  // que viaja verbatim como bound param (Postgres lo coacciona). Así un value
-  // "1" viaja como "1" y no como el número 1.
-  if (field.source === "select" || field.source === "dynamic") {
-    return raw;
-  }
-  if (field.type === "boolean") {
-    return Boolean(raw);
-  }
-  if (field.type === "number") {
-    if (raw === "" || raw === null) {
-      return undefined;
-    }
-    const n = Number(raw);
-    return Number.isNaN(n) ? raw : n;
-  }
-  return raw;
-}
-
 export function ActionFormDialog({
   open,
   action,
@@ -141,56 +98,22 @@ export function ActionFormDialog({
 
   // Campos visibles en el formulario (modo inputFields): los constantes NO se
   // muestran, inicializan ni validan aquí (su valor literal lo resuelve el
-  // backend desde constValue).
+  // backend desde constValue). La semántica vive en la lógica pura.
   const visibleFields = React.useMemo(
-    () => action.inputFields.filter((f) => f.source !== "constant"),
+    () => getVisibleFields(action.inputFields),
     [action],
   );
 
-  // Inicializa los valores del formulario al abrir, desde initialValues.
+  // Inicializa los valores del formulario al abrir, desde initialValues. La
+  // construcción del estado inicial (precedencia precargado → defaultValue → "")
+  // vive en `buildInitialValues` (lógica pura, testeada en entorno node).
   React.useEffect(() => {
     if (!open) {
       return;
     }
-    if (columnMode) {
-      const init: Record<string, string | boolean> = {};
-      for (const cf of columnFields ?? []) {
-        const v = initialValues[cf.field];
-        if (cf.options) {
-          // Origen lista: precarga valor de la fila, o la preselección, o vacío.
-          init[cf.field] =
-            v != null && String(v) !== "" ? String(v) : (cf.defaultValue ?? "");
-        } else {
-          init[cf.field] = v === undefined || v === null ? "" : String(v);
-        }
-      }
-      setValues(init);
-      setErrors({});
-      return;
-    }
-    const init: Record<string, string | boolean> = {};
-    for (const f of visibleFields) {
-      // Precarga por nombre exacto del parámetro: los valores que vienen de la
-      // fila ya llegan en initialValues bajo el nombre del campo (resueltos por
-      // el mapeo explícito "Se llena con" del usuario, sin adivinanzas).
-      // Rama PREVIA por origen lista ("select" ESTÁTICA o "dynamic" DINÁMICA):
-      // precedencia determinista valor precargado explícito → defaultValue del
-      // campo → "" (placeholder). En dinámico el valor precargado es el id actual
-      // de la fila (al editar), que preselecciona la opción cargada.
-      if (f.source === "select" || f.source === "dynamic") {
-        const pre = initialValues[f.name];
-        init[f.name] =
-          pre != null && String(pre) !== "" ? String(pre) : (f.defaultValue ?? "");
-        continue;
-      }
-      const v = initialValues[f.name];
-      if (f.type === "boolean") {
-        init[f.name] = Boolean(v);
-      } else {
-        init[f.name] = v === undefined || v === null ? "" : String(v);
-      }
-    }
-    setValues(init);
+    setValues(
+      buildInitialValues({ columnMode, columnFields, visibleFields, initialValues }),
+    );
     setErrors({});
   }, [open, columnMode, columnFields, visibleFields, initialValues]);
 
@@ -214,60 +137,21 @@ export function ActionFormDialog({
   function handleSubmit(event: React.FormEvent): void {
     event.preventDefault();
 
-    if (columnMode) {
-      // Solo se validan y envían las columnas EDITABLES (no readOnly). Las
-      // columnas readOnly (PK/no editables) se muestran precargadas pero su valor
-      // NO viaja desde aquí: module-view reañade el valor de la PK desde la fila.
-      const editable = (columnFields ?? []).filter((cf) => !cf.readOnly);
-      const nextErrors: Record<string, string> = {};
-      for (const cf of editable) {
-        const empty = String(values[cf.field] ?? "").trim() === "";
-        if (cf.required && empty) {
-          nextErrors[cf.field] = "Este campo es obligatorio";
-        }
-      }
-      if (Object.keys(nextErrors).length > 0) {
-        setErrors(nextErrors);
-        return;
-      }
-      const input: Record<string, unknown> = {};
-      for (const cf of editable) {
-        const raw = values[cf.field] ?? "";
-        // Origen lista: el value elegido viaja tal cual (string); el backend lo
-        // compara contra opt.value. Solo los campos numéricos no-lista se coaccionan.
-        const v = !cf.options && cf.type === "number" && raw !== "" ? Number(raw) : raw;
-        if (v !== undefined && v !== "") {
-          input[cf.field] = v;
-        }
-      }
-      onSubmit(input);
-      return;
-    }
-
-    // Valida obligatoriedad (Req. 10.4). Los campos constantes se excluyen: su
-    // valor no viene del usuario.
-    const nextErrors: Record<string, string> = {};
-    for (const f of visibleFields) {
-      const v = values[f.name];
-      const empty = f.type === "boolean" ? false : String(v ?? "").trim() === "";
-      if (f.required && empty) {
-        nextErrors[f.name] = "Este campo es obligatorio";
-      }
-    }
+    // Validación de obligatoriedad y armado del input viven en la lógica pura
+    // (`validateRequired`/`buildSubmitInput`), testeadas en entorno node. En
+    // columnMode solo participan las columnas editables; los campos constantes ya
+    // están fuera de visibleFields.
+    const nextErrors = validateRequired({
+      columnMode,
+      columnFields,
+      visibleFields,
+      values,
+    });
     if (Object.keys(nextErrors).length > 0) {
       setErrors(nextErrors);
       return;
     }
-    // No se incluyen los campos constantes en el input: el backend los resuelve
-    // desde constValue.
-    const input: Record<string, unknown> = {};
-    for (const f of visibleFields) {
-      const coerced = coerce(f, values[f.name] ?? "");
-      if (coerced !== undefined && coerced !== "") {
-        input[f.name] = coerced;
-      }
-    }
-    onSubmit(input);
+    onSubmit(buildSubmitInput({ columnMode, columnFields, visibleFields, values }));
   }
 
   return (

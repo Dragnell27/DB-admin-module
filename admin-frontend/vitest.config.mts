@@ -47,24 +47,18 @@ export default defineConfig({
     environment: "node",
     globals: true,
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
-    // Exclusión puntual de UNA suite que cuelga el run completo en Windows.
-    //
-    // `src/features/modules/components/action-form-dialog.test.tsx` deja el
-    // worker fork sin terminar: al montar `ActionFormDialog` bajo jsdom (React
-    // 19 + jsdom en Windows) el proceso hijo nunca cierra su pipe de stdout, por
-    // lo que `streamFlushed(fork.stdout)` del pool de Vitest 5.0.3 nunca resuelve
-    // y `runner.stop()`/`close()` quedan colgados; como el safety-net de salida
-    // (`process.exit` al vencer `teardownTimeout`) solo se arma tras finalizar el
-    // run, el proceso no termina NUNCA (verificado: >900 s sin salir, aun con
-    // forks/singleFork, vmForks y threads/singleThread). El resto de la suite
-    // corre y termina sola en ~1 min. Se excluye SOLO este archivo para que
-    // `npm test` vuelva a ser usable; sus 11 tests deben correrse aparte
-    // (`npx vitest run src/features/modules/components/action-form-dialog.test.tsx`)
-    // hasta que una actualización de Vitest corrija el teardown en Windows.
-    exclude: [
-      ...configDefaults.exclude,
-      "src/features/modules/components/action-form-dialog.test.tsx",
-    ],
+    // NOTA (teardown colgante en Windows): montar `ActionFormDialog` bajo jsdom
+    // (y también happy-dom, descartado en el spike) deja el worker fork sin
+    // terminar: el proceso hijo nunca cierra su pipe de stdout, por lo que
+    // `streamFlushed(fork.stdout)` del pool de Vitest 5.0.3 nunca resuelve y el
+    // run no termina (verificado: >900 s sin salir, aun con forks/singleFork,
+    // vmForks y threads/singleThread). Por eso los tests de RENDER de
+    // `src/features/modules/components/action-form-dialog.test.tsx` quedan `.skip`
+    // (Vitest los descubre pero no los monta → no cuelgan) y la lógica sin DOM se
+    // cubre en el test hermano en entorno node
+    // `action-form-dialog.logic.test.ts`. Así el archivo YA NO se excluye: vuelve
+    // al run normal sin colgarlo. Solo se mantienen las exclusiones por defecto.
+    exclude: [...configDefaults.exclude],
     // Tiempos de espera acotados: si algo volviera a atascarse de verdad, el run
     // falla en vez de colgarse para siempre. Se dan 30 s (no 10-15 s) porque en
     // Windows el teardown de una suite jsdom puede tardar varios segundos y, al
