@@ -20,6 +20,7 @@ import { PanelLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { LogoutButton } from "@/components/logout-button";
 import { CountrySelector } from "@/components/country-selector";
+import { ThemeToggle } from "@/components/theme-toggle";
 import {
   getCollapsed,
   subscribeCollapsed,
@@ -100,6 +101,8 @@ export function AppHeader() {
       </div>
 
       <div className="flex items-center gap-4">
+        <ThemeToggle />
+
         {user?.username ? (
           <div className="flex flex-col items-end leading-tight">
             <span className="truncate text-sm font-medium text-foreground">
