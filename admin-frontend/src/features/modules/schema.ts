@@ -366,6 +366,16 @@ export function buildColumnOptions(
   return opts;
 }
 
+/**
+ * Columnas que una acción de ESCRITURA (crear/editar) puede tocar: editables y
+ * no llave primaria. Es la fuente de las opciones de «Columna objetivo» de los
+ * campos de acción. Función pura (extraída de wizard-sections.tsx para poder
+ * probarla sin montar React).
+ */
+export function writableColumns(state: WizardState): ColumnFormState[] {
+  return state.columns.filter((c) => c.editable && !c.isPrimaryKey);
+}
+
 /** Columna por defecto creada por precarga/sincronización desde la lista blanca. */
 export function defaultColumn(
   field: string,

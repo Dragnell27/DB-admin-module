@@ -51,6 +51,8 @@ import {
   selectFieldError,
   selectOptionsError,
   strategyError,
+  syncColumnsMultiTable,
+  syncColumnsWithWhitelist,
   toDefinitionInput,
   type WizardState,
 } from "@/features/modules/schema";
@@ -134,6 +136,44 @@ export function ModuleWizard({ initial, editSlug, title }: ModuleWizardProps) {
   const patch = React.useCallback((p: Partial<WizardState>) => {
     setState((prev) => ({ ...prev, ...p }));
   }, []);
+
+  // Sincroniza `state.columns` con la lista blanca (sección «Tablas y
+  // relaciones») de forma GLOBAL, independiente de la sección activa. Antes
+  // este efecto vivía dentro de `ColumnsSection`, así que si el usuario editaba
+  // la lista blanca y saltaba directo a «Acciones» sin pasar por «Columnas»,
+  // `state.columns` quedaba stale y los selectores de columna (p. ej. «Columna
+  // objetivo») mostraban columnas viejas. Al elevarlo aquí, la precarga y la
+  // resincronización ocurren siempre que cambie la lista blanca, la tabla
+  // principal o las foráneas. Preserva los ajustes de las columnas que persisten
+  // (por `field`/`sourceTable`), añade las nuevas y descarta las eliminadas.
+  const tables = React.useMemo(
+    () => [state.pgTable, ...state.foreignTables].filter(Boolean),
+    [state.pgTable, state.foreignTables],
+  );
+  // Firma de las listas blancas de todas las tablas para reaccionar a cambios
+  // sin recalcular en cada render.
+  const whitelistSig = React.useMemo(
+    () => tables.map((t) => `${t}:${(state.pgWhitelist[t] ?? []).join(",")}`).join("|"),
+    [tables, state.pgWhitelist],
+  );
+  React.useEffect(() => {
+    const multiTable = state.foreignTables.length > 0;
+    const synced = multiTable
+      ? syncColumnsMultiTable(state.columns, state.pgTable, state.pgWhitelist, tables)
+      : syncColumnsWithWhitelist(state.columns, state.pgWhitelist[state.pgTable] ?? []);
+    const changed =
+      synced.length !== state.columns.length ||
+      synced.some(
+        (c, i) =>
+          c.field !== state.columns[i]?.field ||
+          (c.sourceTable || "") !== (state.columns[i]?.sourceTable || ""),
+      );
+    if (changed) {
+      patch({ columns: synced });
+    }
+    // Solo reacciona al conjunto de columnas de las listas blancas.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [whitelistSig]);
 
   /**
    * Valida UNA sección devolviendo {ok, error}. Es el MISMO conjunto de reglas

@@ -55,8 +55,7 @@ import {
   permActionForKind,
   parseColumnList,
   slugifyActionKey,
-  syncColumnsMultiTable,
-  syncColumnsWithWhitelist,
+  writableColumns,
   deleteOrder,
   treeError,
   type ActionFormState,
@@ -132,11 +131,6 @@ function isWriteColumnAction(a: ActionFormState): boolean {
   // construcción. Depender solo del kind mantiene el modo columna aunque una
   // definición vieja venga con sqlOp incoherente.
   return a.kind === "create" || a.kind === "edit";
-}
-
-/** Columnas que una acción de escritura puede tocar: editables y no PK. */
-function writableColumns(state: WizardState): ColumnFormState[] {
-  return state.columns.filter((c) => c.editable && !c.isPrimaryKey);
 }
 
 /**
@@ -975,37 +969,11 @@ function ColumnValueSourceEditor({
 
 export function ColumnsSection({ state, patch }: SectionProps) {
   // Las columnas son la ÚNICA fuente de verdad y se derivan de la lista blanca
-  // (sección «Tablas y relaciones»): se precargan al entrar y se sincronizan si
-  // la lista blanca cambia (R1, R2). Preserva los ajustes de las columnas que
-  // persisten; añade las nuevas; descarta las eliminadas de la lista blanca.
-  const tables = React.useMemo(
-    () => [state.pgTable, ...state.foreignTables].filter(Boolean),
-    [state.pgTable, state.foreignTables],
-  );
+  // (sección «Tablas y relaciones»). La SINCRONIZACIÓN con la lista blanca se
+  // eleva a `ModuleWizard` (efecto global), de modo que `state.columns` queda al
+  // día aunque el usuario edite la lista blanca y salte a otra sección sin pasar
+  // por aquí. Esta sección solo RENDERIZA y edita `state.columns`.
   const multiTable = state.foreignTables.length > 0;
-  // Firma de las listas blancas de todas las tablas para reaccionar a cambios.
-  const whitelistSig = React.useMemo(
-    () => tables.map((t) => `${t}:${(state.pgWhitelist[t] ?? []).join(",")}`).join("|"),
-    [tables, state.pgWhitelist],
-  );
-
-  React.useEffect(() => {
-    const synced = multiTable
-      ? syncColumnsMultiTable(state.columns, state.pgTable, state.pgWhitelist, tables)
-      : syncColumnsWithWhitelist(state.columns, state.pgWhitelist[state.pgTable] ?? []);
-    const changed =
-      synced.length !== state.columns.length ||
-      synced.some(
-        (c, i) =>
-          c.field !== state.columns[i]?.field ||
-          (c.sourceTable || "") !== (state.columns[i]?.sourceTable || ""),
-      );
-    if (changed) {
-      patch({ columns: synced });
-    }
-    // Solo reacciona al conjunto de columnas de las listas blancas.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [whitelistSig]);
 
   const updateColumn = (i: number, p: Partial<ColumnFormState>) => {
     const copy = state.columns.slice();

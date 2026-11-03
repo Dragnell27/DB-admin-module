@@ -6,6 +6,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildColumnOptions,
+  columnOptionValue,
   defaultColumn,
   dynamicFieldError,
   emptyWizardState,
@@ -14,7 +16,9 @@ import {
   missingPrimaryKey,
   parseColumnList,
   selectFieldError,
+  syncColumnsMultiTable,
   syncColumnsWithWhitelist,
+  writableColumns,
   toDefinitionInput,
   type ColumnFormState,
   type FieldFormState,
@@ -563,6 +567,71 @@ describe("parseColumnList (lista de columnas por comas)", () => {
       "valor_lista",
       "valor_objeto",
     ]);
+  });
+});
+
+// BUG 2 — los selectores de columna de ActionsSection («Columna objetivo» y el
+// selector de columnas de estrategias) deben reflejar las columnas recién
+// añadidas a la lista blanca. La derivación es pura: sincronizar `state.columns`
+// con la lista blanca (como hace ahora el efecto global de ModuleWizard), luego
+// filtrar con `writableColumns` y construir opciones con `buildColumnOptions`.
+// Este test reproduce esa cadena SIN montar ColumnsSection.
+describe("derivación de columnas disponibles para selectores de acciones", () => {
+  it("single-table: nuevas columnas de la lista blanca aparecen en las opciones", () => {
+    const current: ColumnFormState[] = [
+      col({ field: "id", isPrimaryKey: true, editable: false, order: 0 }),
+      col({ field: "nombre", order: 1 }),
+    ];
+    // La lista blanca gana "monto" sin pasar por «Columnas».
+    const synced = syncColumnsWithWhitelist(current, ["id", "nombre", "monto"]);
+    const state: WizardState = { ...emptyWizardState(), pgTable: "t", columns: synced };
+
+    const writable = writableColumns(state);
+    // "id" es PK no editable ⇒ fuera; "nombre" y "monto" ⇒ dentro.
+    expect(writable.map((c) => c.field)).toEqual(["nombre", "monto"]);
+
+    const opts = buildColumnOptions(writable, "", "");
+    expect(opts.map((o) => o.value)).toContain(columnOptionValue("monto"));
+    expect(opts.map((o) => o.value)).toContain(columnOptionValue("nombre"));
+  });
+
+  it("multi-tabla: nuevas columnas de una tabla foránea aparecen y se preservan ajustes", () => {
+    // Estado previo: solo una columna por tabla.
+    const current: ColumnFormState[] = [
+      col({ field: "padr_numero", sourceTable: "gt_valores_padre", label: "Padre", order: 0 }),
+      col({ field: "hijo_numero", sourceTable: "gt_valores_hijo", isPrimaryKey: true, editable: false, order: 1 }),
+    ];
+    const whitelist: Record<string, string[]> = {
+      gt_valores_padre: ["padr_numero"],
+      // La lista blanca de la tabla hija se amplía con tres columnas nuevas.
+      gt_valores_hijo: ["hijo_numero", "list_numero_h", "valor_objeto", "obje_numero_h"],
+    };
+    const tables = ["gt_valores_padre", "gt_valores_hijo"];
+    const synced = syncColumnsMultiTable(current, "gt_valores_padre", whitelist, tables);
+
+    // Se preserva la etiqueta de "padr_numero" y la PK de "hijo_numero".
+    expect(synced.find((c) => c.field === "padr_numero")?.label).toBe("Padre");
+    expect(synced.find((c) => c.field === "hijo_numero")?.isPrimaryKey).toBe(true);
+    // Las nuevas columnas de la tabla hija están presentes.
+    expect(synced.map((c) => c.field)).toEqual(
+      expect.arrayContaining(["list_numero_h", "valor_objeto", "obje_numero_h"]),
+    );
+
+    const state: WizardState = {
+      ...emptyWizardState(),
+      pgTable: "gt_valores_padre",
+      foreignTables: ["gt_valores_hijo"],
+      columns: synced,
+    };
+    const writable = writableColumns(state);
+    // "hijo_numero" es PK no editable ⇒ fuera; las nuevas editables ⇒ dentro.
+    expect(writable.map((c) => c.field)).not.toContain("hijo_numero");
+
+    const opts = buildColumnOptions(writable, "", "");
+    const values = opts.map((o) => o.value);
+    expect(values).toContain(columnOptionValue("list_numero_h", "gt_valores_hijo"));
+    expect(values).toContain(columnOptionValue("valor_objeto", "gt_valores_hijo"));
+    expect(values).toContain(columnOptionValue("obje_numero_h", "gt_valores_hijo"));
   });
 });
 
