@@ -12,6 +12,7 @@ import {
   fromCopyableDefinition,
   fromDefinition,
   missingPrimaryKey,
+  parseColumnList,
   selectFieldError,
   syncColumnsWithWhitelist,
   toDefinitionInput,
@@ -525,6 +526,43 @@ describe("syncColumnsWithWhitelist (precarga y sincronización)", () => {
 
   it("lista blanca vacía ⇒ sin columnas", () => {
     expect(syncColumnsWithWhitelist([col({ field: "id" })], [])).toEqual([]);
+  });
+});
+
+// BUG 1 — el input de unicidad descartaba comas/espacios. `parseColumnList` es
+// la función pura que ahora parsea el TEXTO CRUDO a array (el input mantiene el
+// texto tal cual y solo parsea en un efecto), de modo que escribir varias
+// columnas separadas por comas no colapse el texto.
+describe("parseColumnList (lista de columnas por comas)", () => {
+  it("'a, b, c' ⇒ ['a','b','c'] sin colapsar", () => {
+    expect(parseColumnList("a, b, c")).toEqual(["a", "b", "c"]);
+  });
+
+  it("texto vacío ⇒ [] (omitempty: no se emite unicidad)", () => {
+    expect(parseColumnList("")).toEqual([]);
+  });
+
+  it("solo espacios ⇒ []", () => {
+    expect(parseColumnList("  ")).toEqual([]);
+  });
+
+  it("tolera comas sobrantes y espacios", () => {
+    expect(parseColumnList("a,,b, ")).toEqual(["a", "b"]);
+  });
+
+  it("recorta espacios alrededor de cada nombre", () => {
+    expect(parseColumnList(" padr_numero , depe_numero ")).toEqual([
+      "padr_numero",
+      "depe_numero",
+    ]);
+  });
+
+  it("caso real de 3 columnas del usuario", () => {
+    expect(parseColumnList("padr_numero, valor_lista, valor_objeto")).toEqual([
+      "padr_numero",
+      "valor_lista",
+      "valor_objeto",
+    ]);
   });
 });
 

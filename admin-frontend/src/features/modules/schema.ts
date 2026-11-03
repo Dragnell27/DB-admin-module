@@ -285,6 +285,20 @@ export function columnOptionLabel(field: string, sourceTable?: string): string {
   return t !== "" ? `${t}.${field}` : field;
 }
 
+/**
+ * Parsea una lista de columnas escrita por el usuario como texto separado por
+ * comas a un array normalizado: corta por comas, recorta espacios y descarta
+ * las entradas vacías. Es la ÚNICA fuente de verdad de este parseo (lo usan el
+ * input de unicidad y la fila de tabla foránea), de modo que escribir comas y
+ * espacios no colapse el texto. Función pura.
+ */
+export function parseColumnList(text: string): string[] {
+  return text
+    .split(",")
+    .map((c) => c.trim())
+    .filter((c) => c !== "");
+}
+
 /** Separador NUL de la clave compuesta (no aparece en nombres SQL). */
 const COL_SEP = "\u0000";
 

@@ -53,6 +53,7 @@ import {
   emptyUniquenessFormState,
   parseColumnOptionValue,
   permActionForKind,
+  parseColumnList,
   slugifyActionKey,
   syncColumnsMultiTable,
   syncColumnsWithWhitelist,
@@ -76,6 +77,47 @@ export const inputClass =
 /** Indica si `field` corresponde a una columna definida en Columnas. */
 function isKnownColumn(state: WizardState, field: string): boolean {
   return field !== "" && state.columns.some((c) => c.field === field);
+}
+
+/**
+ * Entrada de la UNICIDAD: lista de columnas separada por comas. Mantiene el
+ * TEXTO CRUDO en estado local (igual que `ForeignTableRow`), de modo que
+ * escribir comas y espacios funcione: el parseo a array (`parseColumnList`) se
+ * hace en un efecto, NO en cada tecla. Antes el input se controlaba sobre el
+ * array ya parseado (`.join(", ")` ↔ `split`/`filter`), lo que borraba la coma
+ * recién tecleada y hacía imposible declarar varias columnas. Patrón omitempty:
+ * texto vacío ⇒ `columns=[]` (la unicidad no se emite; lo garantiza
+ * `toUniqueness`).
+ */
+function UniquenessColumnsInput({
+  columns,
+  onColumnsChange,
+}: {
+  readonly columns: string[];
+  readonly onColumnsChange: (columns: string[]) => void;
+}) {
+  const [text, setText] = React.useState(columns.join(", "));
+
+  // Parsea el texto crudo a array y lo propaga al estado del asistente. Solo
+  // reacciona a lo que el usuario teclea (text), no al array de vuelta.
+  React.useEffect(() => {
+    const parsed = parseColumnList(text);
+    const changed =
+      parsed.length !== columns.length ||
+      parsed.some((c, i) => c !== columns[i]);
+    if (changed) {
+      onColumnsChange(parsed);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [text]);
+
+  return (
+    <Input
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+      placeholder="p. ej. padr_numero, depe_numero"
+    />
+  );
 }
 
 /**
@@ -2121,20 +2163,13 @@ export function ActionsSection({ state, patch }: SectionProps) {
               <div className="grid gap-2 rounded-md border border-border/60 p-2 sm:grid-cols-2">
                 <div className="space-y-1">
                   <Label>Unicidad: columnas (opcional)</Label>
-                  <Input
-                    value={a.uniqueness.columns.join(", ")}
-                    onChange={(e) =>
+                  <UniquenessColumnsInput
+                    columns={a.uniqueness.columns}
+                    onColumnsChange={(cols) =>
                       updateAction(ai, {
-                        uniqueness: {
-                          ...a.uniqueness,
-                          columns: e.target.value
-                            .split(",")
-                            .map((c) => c.trim())
-                            .filter((c) => c !== ""),
-                        },
+                        uniqueness: { ...a.uniqueness, columns: cols },
                       })
                     }
-                    placeholder="p. ej. padr_numero, depe_numero"
                   />
                 </div>
                 <div className="space-y-1">
