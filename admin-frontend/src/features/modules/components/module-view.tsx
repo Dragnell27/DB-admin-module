@@ -51,6 +51,7 @@ import {
   ActionFormDialog,
   type ColumnField,
 } from "@/features/modules/components/action-form-dialog";
+import { actionNeedsUserInput } from "@/features/modules/components/action-form-dialog.logic";
 import { ConfirmActionDialog } from "@/features/modules/components/confirm-action-dialog";
 import { safeModuleErrorMessage } from "@/features/modules/lib/error-message";
 
@@ -1126,10 +1127,7 @@ export function ModuleView({ slug }: ModuleViewProps) {
       // campos capturables abre el formulario (al confirmar se setea el filtro);
       // si no, aplica de inmediato (sin campos ⇒ input vacío ⇒ listado base).
       if (isSelectAction(action)) {
-        const needsInput = action.inputFields.some((f) => {
-          const s = f.source ?? "input";
-          return s === "input" || s === "select" || s === "dynamic";
-        });
+        const needsInput = actionNeedsUserInput(action);
         if (needsInput) {
           setMode("form");
         } else {
@@ -1172,10 +1170,7 @@ export function ModuleView({ slug }: ModuleViewProps) {
       // sus campos constantes/row NO abre el diálogo. Una acción destructiva CON
       // campos abre el formulario (que asume el rol de confirmación vía la prop
       // `destructive`); ConfirmActionDialog queda para destructivas SIN campos.
-      const needsUserInput = action.inputFields.some((f) => {
-        const s = f.source ?? "input";
-        return s === "input" || s === "select";
-      });
+      const needsUserInput = actionNeedsUserInput(action);
 
       if (needsUserInput) {
         setMode("form");
