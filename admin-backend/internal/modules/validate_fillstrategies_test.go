@@ -78,13 +78,13 @@ func validFillStrategyDef() *Definition {
 						Attribute:        "list_numero",
 					}},
 					{Name: "padr_numero", Source: FieldSourceFillStrategy, Strategy: &FillStrategy{
-						Kind: StrategyDeriveViaFK,
-						Jump: &FkJump{RelatedTable: "gt_valores_padre", RelatedColumn: "valor_objeto", LocalCaptureKey: "comercio", LocalAttribute: "come_numero"},
+						Kind:    StrategyDeriveViaFK,
+						Jump:    &FkJump{RelatedTable: "gt_valores_padre", RelatedColumn: "valor_objeto", LocalCaptureKey: "comercio", LocalAttribute: "come_numero"},
 						Mapping: []AttributeMap{{Attribute: "padr_numero", TargetColumn: "padr_numero"}},
 					}},
 					{Name: "depe_numero", Source: FieldSourceFillStrategy, Strategy: &FillStrategy{
-						Kind: StrategyDeriveViaFK,
-						Jump: &FkJump{RelatedTable: "gt_valores_padre", RelatedColumn: "valor_objeto", LocalCaptureKey: "comercio", LocalAttribute: "come_numero"},
+						Kind:    StrategyDeriveViaFK,
+						Jump:    &FkJump{RelatedTable: "gt_valores_padre", RelatedColumn: "valor_objeto", LocalCaptureKey: "comercio", LocalAttribute: "come_numero"},
 						Mapping: []AttributeMap{{Attribute: "depe_numero", TargetColumn: "depe_numero"}},
 					}},
 					{Name: "usrio_numero", Source: FieldSourceConstant, ConstValue: "1"},
@@ -240,5 +240,57 @@ func TestValidateFillStrategies_LocalAttributeOutOfCatalogWhitelist(t *testing.T
 	err := validateFillStrategies(def)
 	if err == nil || !errors.Is(err, ErrMultiTableValidation) {
 		t.Fatalf("se esperaba rechazo por localAttribute fuera de whitelist del catálogo local: %v", err)
+	}
+}
+
+// Unicidad (FEAT-002): combinación de columnas en la whitelist de la tabla
+// objetivo ⇒ definición válida.
+func TestValidateFillStrategies_UniquenessValid(t *testing.T) {
+	def := validFillStrategyDef()
+	def.Actions[0].Uniqueness = &UniquenessCheck{
+		Columns: []string{"padr_numero", "valor_lista"},
+		Message: "Ese medio de pago ya está activo para el comercio",
+	}
+	if err := validateDefinition(def); err != nil {
+		t.Fatalf("la definición con unicidad válida no debe fallar: %v", err)
+	}
+}
+
+// Unicidad (FEAT-002): una columna de la combinación fuera de la whitelist de la
+// tabla objetivo ⇒ ErrMultiTableValidation.
+func TestValidateFillStrategies_UniquenessColumnOutOfWhitelist(t *testing.T) {
+	def := validFillStrategyDef()
+	def.Actions[0].Uniqueness = &UniquenessCheck{
+		Columns: []string{"padr_numero", "columna_inexistente"},
+	}
+	err := validateFillStrategies(def)
+	if err == nil || !errors.Is(err, ErrMultiTableValidation) {
+		t.Fatalf("se esperaba rechazo por columna de unicidad fuera de whitelist: %v", err)
+	}
+}
+
+// Unicidad (FEAT-002): una acción con Uniqueness pero SIN TargetTable ⇒
+// ErrMultiTableValidation (camino transaccional, aunque no tenga estrategias).
+func TestValidateFillStrategies_UniquenessWithoutTargetTable(t *testing.T) {
+	def := &Definition{
+		Slug:       "solo-unicidad",
+		Name:       "Solo unicidad",
+		SourceType: SourcePostgres,
+		DataSource: DataSource{
+			SourceType:  SourcePostgres,
+			PGWhitelist: map[string][]string{"gt_valores_hijo": {"valor_lista"}},
+		},
+		Actions: []Action{
+			{
+				ActionKey:  "crear",
+				Kind:       ActionKindCreate,
+				SQLOp:      "INSERT",
+				Uniqueness: &UniquenessCheck{Columns: []string{"valor_lista"}},
+			},
+		},
+	}
+	err := validateFillStrategies(def)
+	if err == nil || !errors.Is(err, ErrMultiTableValidation) {
+		t.Fatalf("se esperaba rechazo por unicidad sin tabla objetivo: %v", err)
 	}
 }

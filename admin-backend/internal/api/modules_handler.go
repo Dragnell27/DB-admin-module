@@ -486,6 +486,16 @@ func (h *ModulesHandler) ExecAction(c *gin.Context) {
 			writeError(c, http.StatusUnprocessableEntity, "E422_DERIVE", "No se pudo resolver la relación para la opción elegida")
 			return
 		}
+		if errors.Is(err, engine.ErrUniqueness) {
+			// Conflicto de unicidad: mensaje de NEGOCIO del admin (nunca SQL). Se toma
+			// del propio Uniqueness.Message de la acción; vacío ⇒ genérico en español.
+			msg := "Ya existe un registro con esa combinación de valores"
+			if act.Uniqueness != nil && strings.TrimSpace(act.Uniqueness.Message) != "" {
+				msg = act.Uniqueness.Message
+			}
+			writeError(c, http.StatusConflict, "E409_UNIQUENESS", msg)
+			return
+		}
 		writeError(c, http.StatusBadGateway, "E502", "El origen del módulo no pudo ejecutar la acción: "+err.Error())
 		return
 	}

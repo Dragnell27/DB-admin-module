@@ -297,6 +297,23 @@ type Action struct {
 	// TargetTable es, para una acción INSERT (create) MULTI-TABLA, la tabla
 	// objetivo del INSERT. Ausente ⇒ la tabla principal (N=1, sin regresión).
 	TargetTable string `json:"targetTable,omitempty"`
+	// Uniqueness declara, para una acción INSERT (create), una combinación de
+	// columnas de la TargetTable que debe ser única. El motor la verifica con un
+	// SELECT acotado ANTES del INSERT (pre-check) y mapea una violación UNIQUE
+	// real (23505) al mismo error de negocio. Ausente ⇒ sin verificación de
+	// unicidad (retrocompat por omitempty, design.md §8).
+	Uniqueness *UniquenessCheck `json:"uniqueness,omitempty"`
+}
+
+// UniquenessCheck es la combinación de columnas de la TargetTable que una acción
+// INSERT exige única, más el mensaje de negocio que se muestra al chocar. El
+// motor compone un SELECT acotado con `col = $N` para columnas con valor e
+// `IS NOT DISTINCT FROM` para columnas con valor NULL o ausentes en el input
+// resuelto; cada columna se valida contra la lista blanca de la TargetTable y
+// cada valor viaja como parámetro ligado (design.md §8).
+type UniquenessCheck struct {
+	Columns []string `json:"columns"`           // columnas de la TargetTable que forman la combinación única
+	Message string   `json:"message,omitempty"` // mensaje de negocio mostrado al chocar
 }
 
 // DataSource es el modelo de dominio del origen de datos de un módulo, SIN las

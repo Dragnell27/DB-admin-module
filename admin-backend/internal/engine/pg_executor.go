@@ -10,6 +10,8 @@ import (
 	"sync"
 
 	"admin-backend/internal/modules"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // ErrWhitelist indica que una operación Postgres referencia una tabla o columna
@@ -716,6 +718,11 @@ func (e *PGExecutor) Exec(ctx context.Context, def modules.Definition, country s
 			insertInput, err = resolveFillStrategies(ctx, tx, def.DataSource.PGWhitelist, act, insertInput)
 		}
 		if err == nil {
+			// Pre-check de unicidad (§8) tras resolver estrategias y ANTES del INSERT.
+			// No-op si act.Uniqueness == nil.
+			err = checkUniqueness(ctx, tx, def.DataSource.PGWhitelist, act, insertInput)
+		}
+		if err == nil {
 			affected, err = execSingleInsert(ctx, tx, def.DataSource.PGWhitelist, cols, spec, act, insertInput)
 		}
 	default:
@@ -931,6 +938,12 @@ func execSingleInsert(ctx context.Context, tx txExecer, whitelist map[string][]s
 	}
 	res, err := tx.ExecContext(ctx, q, args...)
 	if err != nil {
+		// Carrera (hallazgo 9/§8): el pre-check de unicidad pudo pasar y un INSERT
+		// concurrente ganar; si la BD tiene un UNIQUE real, Postgres devuelve 23505.
+		// Se mapea al MISMO error de negocio (mensaje del admin, nunca SQL).
+		if act.Uniqueness != nil && isUniqueViolation(err) {
+			return 0, fmt.Errorf("%w: %s", ErrUniqueness, uniquenessMessage(act.Uniqueness))
+		}
 		return 0, fmt.Errorf("engine: error ejecutando la operación: %w", err)
 	}
 	n, _ := res.RowsAffected()
@@ -1162,11 +1175,13 @@ func whitelistedColumns(whitelist map[string][]string, table string) []string {
 }
 
 // needsResolutionTx indica si una acción INSERT necesita abrir la transacción de
-// resolución (INV-3): hoy, cuando declara estrategias de llenado
-// (HasFillStrategies). FEAT-002 ampliará este predicado con act.Uniqueness != nil.
-// La tabla objetivo (act.TargetTable != "") la comprueba el llamador.
+// resolución (INV-3): cuando declara estrategias de llenado (HasFillStrategies) o
+// cuando declara una verificación de unicidad (Uniqueness != nil). El pre-check
+// de unicidad y los SELECT de catálogo/salto deben correr dentro de la MISMA
+// transacción que el INSERT para compartir snapshot. La tabla objetivo
+// (act.TargetTable != "") la comprueba el llamador.
 func needsResolutionTx(act modules.Action) bool {
-	return modules.HasFillStrategies(act)
+	return modules.HasFillStrategies(act) || act.Uniqueness != nil
 }
 
 // execInsertWithStrategies abre una transacción en el camino N=1 para resolver
@@ -1184,6 +1199,12 @@ func (e *PGExecutor) execInsertWithStrategies(ctx context.Context, def modules.D
 	}
 	resolved, err := resolveFillStrategies(ctx, tx, def.DataSource.PGWhitelist, act, input)
 	if err != nil {
+		_ = tx.Rollback()
+		return nil, "", err
+	}
+	// Pre-check de unicidad (§8) DESPUÉS de resolver las estrategias (los valores
+	// derivados ya están en `resolved`) y ANTES del INSERT, dentro de la misma tx.
+	if err := checkUniqueness(ctx, tx, def.DataSource.PGWhitelist, act, resolved); err != nil {
 		_ = tx.Rollback()
 		return nil, "", err
 	}
@@ -1205,6 +1226,99 @@ func (e *PGExecutor) execInsertWithStrategies(ctx context.Context, def modules.D
 // >1 ⇒ no es 1-a-1). El handler lo mapea a E422_DERIVE con un mensaje FIJO de
 // negocio (sin concatenar err.Error()); el detalle queda solo en logs del motor.
 var ErrDeriveRelation = errors.New("engine: no se pudo resolver la relación")
+
+// ErrUniqueness es el error de negocio que el motor devuelve (envuelto con el
+// mensaje del admin) cuando una acción INSERT viola la combinación de columnas
+// declarada única: el pre-check SELECT encontró una fila existente, o el INSERT
+// chocó con un UNIQUE real de la BD (SQLSTATE 23505). El handler lo mapea a
+// 409 E409_UNIQUENESS mostrando el mensaje de negocio, NUNCA el SQL (design.md §8).
+var ErrUniqueness = errors.New("engine: la combinación de valores ya existe")
+
+// uniquenessMessage devuelve el mensaje de negocio a mostrar al chocar: el
+// Message declarado por el admin o, si está vacío, uno genérico en español.
+func uniquenessMessage(u *modules.UniquenessCheck) string {
+	if u != nil && strings.TrimSpace(u.Message) != "" {
+		return u.Message
+	}
+	return "Ya existe un registro con esa combinación de valores"
+}
+
+// buildUniquenessSQL compone el pre-check de unicidad: "SELECT 1 FROM <table>
+// WHERE <pred> LIMIT 1". Por cada columna de la combinación, si el input
+// resuelto tiene un valor NO nil usa "col = $N" (valor ligado); si la columna
+// está ausente o su valor es nil usa "col IS NOT DISTINCT FROM $N" con NULL
+// ligado, de modo que dos "sin valor" cuenten como iguales (design.md §8). CADA
+// columna se valida contra la lista blanca de la tabla; fuera de lista ⇒
+// ErrWhitelist SIN producir SQL. Sin columnas ⇒ error que envuelve ErrValidation.
+// LIMIT 1 y los operadores son literales fijos; los valores jamás se interpolan.
+func buildUniquenessSQL(whitelist map[string][]string, table string, columns []string, input map[string]any) (string, []any, error) {
+	if len(columns) == 0 {
+		return "", nil, fmt.Errorf("%w: la verificación de unicidad requiere al menos una columna", ErrValidation)
+	}
+	if err := checkTable(whitelist, table); err != nil {
+		return "", nil, err
+	}
+	allowedSet := make(map[string]struct{}, len(whitelist[table]))
+	for _, c := range whitelist[table] {
+		allowedSet[c] = struct{}{}
+	}
+	preds := make([]string, 0, len(columns))
+	args := make([]any, 0, len(columns))
+	n := 1
+	for _, col := range columns {
+		if _, ok := allowedSet[col]; !ok {
+			return "", nil, fmt.Errorf("%w: columna de unicidad %q en la tabla %q", ErrWhitelist, col, table)
+		}
+		v, present := input[col]
+		if !present || v == nil {
+			// Ausente o NULL: ambos son "sin valor"; IS NOT DISTINCT FROM NULL casa
+			// con filas cuyo valor también es NULL.
+			preds = append(preds, fmt.Sprintf("%s IS NOT DISTINCT FROM $%d", quoteIdent(col), n))
+			args = append(args, nil)
+		} else {
+			preds = append(preds, fmt.Sprintf("%s = $%d", quoteIdent(col), n))
+			args = append(args, v)
+		}
+		n++
+	}
+	sql := fmt.Sprintf("SELECT 1 FROM %s WHERE %s LIMIT 1", quoteIdent(table), strings.Join(preds, " AND "))
+	return sql, args, nil
+}
+
+// checkUniqueness ejecuta el pre-check de unicidad sobre la tx ANTES del INSERT.
+// Si la combinación ya existe (el SELECT devuelve una fila) ⇒ ErrUniqueness
+// envuelto con el mensaje de negocio del admin; el llamador revierte la tx y no
+// inserta. Sin fila ⇒ nil (se procede al INSERT).
+func checkUniqueness(ctx context.Context, tx txExecer, whitelist map[string][]string, act modules.Action, input map[string]any) error {
+	if act.Uniqueness == nil {
+		return nil
+	}
+	query, args, err := buildUniquenessSQL(whitelist, act.TargetTable, act.Uniqueness.Columns, input)
+	if err != nil {
+		return err
+	}
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("engine: error verificando unicidad: %w", err)
+	}
+	defer rows.Close()
+	if rows.Next() {
+		return fmt.Errorf("%w: %s", ErrUniqueness, uniquenessMessage(act.Uniqueness))
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("engine: error verificando unicidad: %w", err)
+	}
+	return nil
+}
+
+// isUniqueViolation reconoce una violación de restricción UNIQUE de PostgreSQL
+// por su SQLSTATE 23505 (unique_violation), sin parsear el texto del error. Se
+// usa tras el ExecContext del INSERT para mapear una carrera (el pre-check pasó
+// pero un INSERT concurrente ganó) al mismo ErrUniqueness de negocio (design.md §8).
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
 
 // buildRowLookupSQL compone el SELECT acotado que relee una fila por una columna
 // clave (catálogo o salto FK): "SELECT <selectColumns> FROM <table> WHERE

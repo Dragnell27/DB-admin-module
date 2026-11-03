@@ -569,13 +569,17 @@ func validateDefinition(def *Definition) error {
 func validateFillStrategies(def *Definition) error {
 	whitelist := def.DataSource.PGWhitelist
 	for _, act := range def.Actions {
-		if !HasFillStrategies(act) {
+		// Se valida cualquier acción con estrategias de llenado O con unicidad: ambas
+		// activan el camino transaccional del motor (INV-3) y por tanto exigen
+		// TargetTable (design.md §8).
+		if !HasFillStrategies(act) && act.Uniqueness == nil {
 			continue
 		}
 
-		// Regla 1: camino transaccional.
+		// Regla 1: camino transaccional. Una acción con estrategias o con unicidad
+		// debe declarar la tabla objetivo del INSERT.
 		if strings.TrimSpace(act.TargetTable) == "" {
-			return fmt.Errorf("%w: la acción %q usa estrategias de llenado y debe declarar una tabla objetivo (camino transaccional)", ErrMultiTableValidation, act.ActionKey)
+			return fmt.Errorf("%w: la acción %q usa estrategias de llenado o unicidad y debe declarar una tabla objetivo (camino transaccional)", ErrMultiTableValidation, act.ActionKey)
 		}
 		target := act.TargetTable
 		targetSet, ok := whitelistSetOf(whitelist, target)
@@ -685,6 +689,21 @@ func validateFillStrategies(def *Definition) error {
 				// Sin referencias ni columnas de catálogo que validar aquí.
 			default:
 				return fmt.Errorf("%w: el campo %q de la acción %q declara una estrategia de llenado desconocida %q", ErrMultiTableValidation, f.Name, act.ActionKey, s.Kind)
+			}
+		}
+
+		// Unicidad (FEAT-002, design.md §8): cada columna de la combinación debe
+		// estar en la lista blanca de la tabla objetivo. La obligación de camino
+		// transaccional (Uniqueness != nil exige TargetTable) ya la cubre la Regla 1
+		// arriba (se entra a este bloque solo con TargetTable no vacía).
+		if act.Uniqueness != nil {
+			if len(act.Uniqueness.Columns) == 0 {
+				return fmt.Errorf("%w: la acción %q declara unicidad sin columnas", ErrMultiTableValidation, act.ActionKey)
+			}
+			for _, col := range act.Uniqueness.Columns {
+				if _, isCol := targetSet[col]; !isCol {
+					return fmt.Errorf("%w: la columna de unicidad %q de la acción %q no está en la lista blanca de la tabla objetivo %q", ErrMultiTableValidation, col, act.ActionKey, target)
+				}
 			}
 		}
 	}
