@@ -53,6 +53,7 @@ import {
   emptyStrategyFormState,
   emptyUniquenessFormState,
   fieldRowKey,
+  fieldTargetColumnError,
   nextUid,
   parseColumnOptionValue,
   permActionForKind,
@@ -2241,6 +2242,14 @@ function ActionFieldRow({
 }) {
   const [open, setOpen] = React.useState(f.name.trim() === "");
   const panelId = `w_action_field_${a.actionKey || "n"}_${index}`;
+  // Validación EN VIVO de la "columna objetivo" vacía (Arreglo 2). Solo se marca
+  // en rojo tras interacción (`touched`), nunca pre-interacción en un campo
+  // recién creado. El touched local es fiable porque el Arreglo 1 evita que la
+  // fila se remonte al elegir la columna (key por uid, no por name). El BLOQUEO
+  // del guardado es independiente de touched (vía actionsSectionError).
+  const [touched, setTouched] = React.useState(false);
+  const colObjInvalid = fieldTargetColumnError(f) !== null && touched;
+  const colObjErrorId = `${panelId}_colobj_error`;
 
   return (
     <CollapsibleRow
@@ -2270,6 +2279,9 @@ function ActionFieldRow({
                         <select
                           className={inputClass}
                           value={columnOptionValue(f.name, f.sourceTable ?? "")}
+                          onBlur={() => setTouched(true)}
+                          aria-invalid={colObjInvalid || undefined}
+                          aria-describedby={colObjInvalid ? colObjErrorId : undefined}
                           onChange={(e) => {
                             const { field, sourceTable } = parseColumnOptionValue(e.target.value);
                             onUpdateField({ name: field, sourceTable });
@@ -2291,6 +2303,9 @@ function ActionFieldRow({
                         <select
                           className={inputClass}
                           value={columnOptionValue(f.name, f.sourceTable ?? "")}
+                          onBlur={() => setTouched(true)}
+                          aria-invalid={colObjInvalid || undefined}
+                          aria-describedby={colObjInvalid ? colObjErrorId : undefined}
                           onChange={(e) => {
                             const { field, sourceTable } = parseColumnOptionValue(e.target.value);
                             onUpdateField({ name: field, sourceTable });
@@ -2306,6 +2321,11 @@ function ActionFieldRow({
                           ))}
                         </select>
                       )}
+                      {colObjInvalid ? (
+                        <p className="text-xs text-destructive" role="alert" id={colObjErrorId}>
+                          Falta la columna objetivo
+                        </p>
+                      ) : null}
                     </div>
                     <div className="space-y-1">
                       <Label>Tipo</Label>

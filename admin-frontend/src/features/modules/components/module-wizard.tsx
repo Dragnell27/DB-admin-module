@@ -40,17 +40,14 @@ import {
 } from "@/features/modules/hooks";
 import { useConnectionTemplates } from "@/features/connections/hooks";
 import {
-  actionIsComplete,
-  dynamicFieldError,
+  actionsSectionError,
   dynamicSourceError,
   emptyWizardState,
   fromCopyableDefinition,
   hasAtLeastOneColumn,
   tablesMissingPrimaryKey,
   moduleBaseSchema,
-  selectFieldError,
   selectOptionsError,
-  strategyError,
   syncColumnsMultiTable,
   syncColumnsWithWhitelist,
   toDefinitionInput,
@@ -250,40 +247,16 @@ export function ModuleWizard({ initial, editSlug, title }: ModuleWizardProps) {
           };
         }
       }
-      for (const a of state.actions) {
-        if (!actionIsComplete(a)) {
-          return { ok: false, error: `La acción "${a.label || a.actionKey}" está incompleta` };
-        }
-        for (const f of a.inputFields) {
-          if (f.source === "select") {
-            const err = selectFieldError(f);
-            if (err) {
-              return { ok: false, error: err };
-            }
-          }
-          if (f.source === "dynamic") {
-            const err = dynamicFieldError(f);
-            if (err) {
-              return { ok: false, error: err };
-            }
-          }
-          if (f.source === "fillStrategy") {
-            // Capturas declaradas de la acción (clave de captura de cada
-            // capture-from-catalog) para validar que las derivaciones las
-            // referencien. El backend es la autoridad final.
-            const captureKeys = a.inputFields
-              .filter(
-                (g) =>
-                  g.source === "fillStrategy" &&
-                  g.strategy.kind === "capture-from-catalog",
-              )
-              .map((g) => g.strategy.captureKey.trim())
-              .filter((k) => k !== "");
-            const err = strategyError(f, captureKeys);
-            if (err) {
-              return { ok: false, error: err };
-            }
-          }
+      // Resto de reglas por acción/campo (incluida la columna objetivo vacía del
+      // Arreglo 2) centralizadas en una función pura. ORDEN DE PRIORIDAD: el
+      // chequeo de PK (arriba) precede a este agregador; dentro, por acción,
+      // acción incompleta → columna objetivo vacía → errores de source. El
+      // agregador usa declaredCaptureKeys(a, -1) como ÚNICA fuente de las
+      // capturas (ya no hay filtro inline duplicado aquí).
+      {
+        const err = actionsSectionError(state);
+        if (err) {
+          return { ok: false, error: err };
         }
       }
       return { ok: true, error: null };

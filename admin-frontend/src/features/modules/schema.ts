@@ -1683,3 +1683,84 @@ export function actionIsComplete(a: ActionFormState): boolean {
   }
   return true;
 }
+
+/**
+ * `captureKey` declarados por las capturas de catálogo (`capture-from-catalog`)
+ * de una acción, EXCLUYENDO el campo de índice `selfIndex`. Recorre TODOS los
+ * campos (independiente del orden), con trim, sin duplicados y en orden de
+ * aparición. Es la ÚNICA fuente de verdad (la usan el desplegable
+ * `sourceCaptureKey`/`localCaptureKey` de las derivaciones con `selfIndex` del
+ * campo y el agregador `actionsSectionError` con `selfIndex = -1`). Función pura.
+ */
+export function declaredCaptureKeys(a: ActionFormState, selfIndex: number): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  a.inputFields.forEach((f, i) => {
+    if (i === selfIndex) {
+      return;
+    }
+    if (f.source !== "fillStrategy" || f.strategy.kind !== "capture-from-catalog") {
+      return;
+    }
+    const key = f.strategy.captureKey.trim();
+    if (key !== "" && !seen.has(key)) {
+      seen.add(key);
+      result.push(key);
+    }
+  });
+  return result;
+}
+
+/**
+ * Devuelve el error (español) si un campo de entrada requiere columna objetivo y
+ * está vacía, o null. Todo campo de entrada de una acción mapea a una columna
+ * (`name` == columna); el backend rechaza `name` vacío como "no está en la lista
+ * blanca de la tabla objetivo". Es una PRIMERA LÍNEA de validación en el
+ * frontend; NO sustituye la del backend (autoridad final). Función pura.
+ */
+export function fieldTargetColumnError(field: FieldFormState): string | null {
+  return field.name.trim() === "" ? "Falta la columna objetivo" : null;
+}
+
+/**
+ * Recorre acciones→campos aplicando las reglas por campo (igual que la rama
+ * "actions" de `checkSection`) MÁS el check de columna objetivo vacía. Devuelve
+ * el primer error (español) o null. NO incluye el chequeo de PK: eso lo hace
+ * `tablesMissingPrimaryKey` ANTES de llamar aquí.
+ *
+ * ORDEN DE PRIORIDAD (contrato, cambio de comportamiento DELIBERADO del Arreglo
+ * 2): PK (fuera) → acción incompleta → columna objetivo vacía → errores de
+ * source (select/dynamic/fillStrategy). Para un campo con `name===""` que además
+ * tenga un error de source, ahora prevalece "…tiene un campo sin columna
+ * objetivo (campo #N)" en vez del error de source, para localizar primero la
+ * causa raíz. El bloqueo del guardado es independiente del `touched` de la UI.
+ * Función pura.
+ */
+export function actionsSectionError(state: WizardState): string | null {
+  for (const a of state.actions) {
+    if (!actionIsComplete(a)) {
+      return `La acción "${a.label || a.actionKey}" está incompleta`;
+    }
+    // Capturas declaradas de la acción (sin excluir ninguno): única fuente.
+    const captureKeys = declaredCaptureKeys(a, -1);
+    for (const [fi, f] of a.inputFields.entries()) {
+      const colErr = fieldTargetColumnError(f);
+      if (colErr) {
+        return `La acción "${a.label || a.actionKey}" tiene un campo sin columna objetivo (campo #${fi + 1}).`;
+      }
+      if (f.source === "select") {
+        const e = selectFieldError(f);
+        if (e) return e;
+      }
+      if (f.source === "dynamic") {
+        const e = dynamicFieldError(f);
+        if (e) return e;
+      }
+      if (f.source === "fillStrategy") {
+        const e = strategyError(f, captureKeys);
+        if (e) return e;
+      }
+    }
+  }
+  return null;
+}
