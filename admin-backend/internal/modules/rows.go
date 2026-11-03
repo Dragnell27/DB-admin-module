@@ -55,19 +55,24 @@ func (dataSourceRow) TableName() string {
 
 // actionRow mapea la tabla `module_actions`.
 type actionRow struct {
-	ID          string    `gorm:"column:id;type:uuid;primaryKey;default:gen_random_uuid()"`
-	ModuleID    string    `gorm:"column:module_id;type:uuid;not null"`
-	ActionKey   string    `gorm:"column:action_key;type:varchar(64);not null"`
-	Kind        string    `gorm:"column:kind;type:varchar(16);not null"`
-	Label       string    `gorm:"column:label;type:varchar(120);not null"`
-	Placement   string    `gorm:"column:placement;type:varchar(8);not null"`
-	Destructive bool      `gorm:"column:destructive;not null;default:false"`
-	PermAction  string    `gorm:"column:perm_action;type:varchar(32);not null"`
-	IsWrite     bool      `gorm:"column:is_write;not null;default:false"`
-	SQLOp       string    `gorm:"column:sql_op;type:varchar(8)"`
-	InputFields []byte    `gorm:"column:input_fields;type:jsonb;not null;default:'[]'"`
-	CreatedAt   time.Time `gorm:"column:created_at;type:timestamptz;autoCreateTime"`
-	UpdatedAt   time.Time `gorm:"column:updated_at;type:timestamptz;autoUpdateTime"`
+	ID          string `gorm:"column:id;type:uuid;primaryKey;default:gen_random_uuid()"`
+	ModuleID    string `gorm:"column:module_id;type:uuid;not null"`
+	ActionKey   string `gorm:"column:action_key;type:varchar(64);not null"`
+	Kind        string `gorm:"column:kind;type:varchar(16);not null"`
+	Label       string `gorm:"column:label;type:varchar(120);not null"`
+	Placement   string `gorm:"column:placement;type:varchar(8);not null"`
+	Destructive bool   `gorm:"column:destructive;not null;default:false"`
+	PermAction  string `gorm:"column:perm_action;type:varchar(32);not null"`
+	IsWrite     bool   `gorm:"column:is_write;not null;default:false"`
+	SQLOp       string `gorm:"column:sql_op;type:varchar(8)"`
+	InputFields []byte `gorm:"column:input_fields;type:jsonb;not null;default:'[]'"`
+	// Config almacena la configuración extendida de la acción que el modelo plano
+	// no mapea en columnas propias: targetTable, uniqueness y deleteTopTable. Se
+	// serializa como JSONB con encoding/json (helpers encodeActionConfig/
+	// decodeActionConfig). Filas antiguas tienen '{}' => sin claves (retrocompat).
+	Config    []byte    `gorm:"column:config;type:jsonb;not null;default:'{}'"`
+	CreatedAt time.Time `gorm:"column:created_at;type:timestamptz;autoCreateTime"`
+	UpdatedAt time.Time `gorm:"column:updated_at;type:timestamptz;autoUpdateTime"`
 }
 
 // TableName fija el nombre de la tabla para GORM.

@@ -474,6 +474,7 @@ func insertActions(tx *gorm.DB, moduleID string, actions []Action) error {
 			IsWrite:     a.IsWrite,
 			SQLOp:       a.SQLOp,
 			InputFields: encodeJSONArray(a.InputFields),
+			Config:      encodeActionConfig(a),
 		})
 	}
 	if err := tx.Create(&rows).Error; err != nil {
@@ -1051,17 +1052,21 @@ func (s Secrets) isEmpty() bool {
 
 // toActionDomain convierte una fila de acción al modelo de dominio.
 func toActionDomain(ar actionRow) Action {
+	targetTable, uniqueness, deleteTopTable := decodeActionConfig(ar.Config)
 	return Action{
-		ID:          ar.ID,
-		ActionKey:   ar.ActionKey,
-		Kind:        ar.Kind,
-		Label:       ar.Label,
-		Placement:   ar.Placement,
-		Destructive: ar.Destructive,
-		PermAction:  ar.PermAction,
-		IsWrite:     ar.IsWrite,
-		SQLOp:       ar.SQLOp,
-		InputFields: decodeFieldSpecs(ar.InputFields),
+		ID:             ar.ID,
+		ActionKey:      ar.ActionKey,
+		Kind:           ar.Kind,
+		Label:          ar.Label,
+		Placement:      ar.Placement,
+		Destructive:    ar.Destructive,
+		PermAction:     ar.PermAction,
+		IsWrite:        ar.IsWrite,
+		SQLOp:          ar.SQLOp,
+		InputFields:    decodeFieldSpecs(ar.InputFields),
+		TargetTable:    targetTable,
+		Uniqueness:     uniqueness,
+		DeleteTopTable: deleteTopTable,
 	}
 }
 
@@ -1109,6 +1114,50 @@ func decodeFieldSpecs(b []byte) []FieldSpec {
 		return nil
 	}
 	return v
+}
+
+// actionConfig es la forma serializada de la configuración extendida de una
+// acción en la columna JSONB `config`. Todas las claves son omitempty para que
+// una acción sin configuración extendida produzca exactamente "{}" (retrocompat
+// byte-por-byte con filas antiguas).
+type actionConfig struct {
+	TargetTable    string           `json:"targetTable,omitempty"`
+	Uniqueness     *UniquenessCheck `json:"uniqueness,omitempty"`
+	DeleteTopTable string           `json:"deleteTopTable,omitempty"`
+}
+
+// encodeActionConfig serializa la configuración extendida de una acción
+// (targetTable, uniqueness, deleteTopTable) a JSONB. Emite SOLO las claves
+// presentes; una acción sin ninguna de ellas produce "{}" (byte-por-byte igual
+// que las filas antiguas). Es el inverso de decodeActionConfig.
+func encodeActionConfig(a Action) []byte {
+	cfg := actionConfig{
+		TargetTable:    a.TargetTable,
+		Uniqueness:     a.Uniqueness,
+		DeleteTopTable: a.DeleteTopTable,
+	}
+	if cfg.TargetTable == "" && cfg.Uniqueness == nil && cfg.DeleteTopTable == "" {
+		return []byte("{}")
+	}
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return []byte("{}")
+	}
+	return b
+}
+
+// decodeActionConfig relee la configuración extendida de una acción desde el
+// JSONB `config`. Es tolerante: JSON inválido, nil o vacío devuelven ceros sin
+// panic (espejo de decodeFieldSpecs). Inverso de encodeActionConfig.
+func decodeActionConfig(b []byte) (targetTable string, uniqueness *UniquenessCheck, deleteTopTable string) {
+	if len(b) == 0 {
+		return "", nil, ""
+	}
+	var cfg actionConfig
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		return "", nil, ""
+	}
+	return cfg.TargetTable, cfg.Uniqueness, cfg.DeleteTopTable
 }
 
 func encodeWhitelist(w map[string][]string) []byte {
