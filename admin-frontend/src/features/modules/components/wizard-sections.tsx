@@ -115,6 +115,20 @@ function UniquenessColumnsInput({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text]);
 
+  // Resincroniza el texto cuando `columns` cambia por fuera (remonte de sección
+  // al navegar entre pestañas, hidratación, etc.). Bug #2: al cambiar la
+  // plantilla de conexión la sección "Acciones" se desmonta/remonta y el texto
+  // local quedaba desacoplado del estado (que SÍ conserva las columnas en el
+  // reducer). Guarda anti-bucle: solo escribe `text` (estado local) y SOLO si su
+  // parseo difiere de `columns`, de modo que NUNCA llama onColumnsChange ni pisa
+  // lo que el usuario está tecleando (coexiste con el efecto `[text]` de arriba).
+  React.useEffect(() => {
+    if (parseColumnList(text).join("\u0000") !== columns.join("\u0000")) {
+      setText(columns.join(", "));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [columns.join("\u0000")]);
+
   return (
     <Input
       value={text}
