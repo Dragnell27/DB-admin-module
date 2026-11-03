@@ -1322,36 +1322,54 @@ func isUniqueViolation(err error) bool {
 
 // buildRowLookupSQL compone el SELECT acotado que relee una fila por una columna
 // clave (catálogo o salto FK): "SELECT <selectColumns> FROM <table> WHERE
-// <keyColumn> = $1 LIMIT 2". Calca la validación de buildOptionsSQL: valida la
-// tabla con checkTable y CADA columna de selectColumns MÁS keyColumn contra la
-// lista blanca; un identificador fuera de lista ⇒ ErrWhitelist SIN producir SQL.
-// selectColumns vacío ⇒ error que envuelve ErrValidation. El LIMIT 2 es literal
-// (detecta >1); el valor local lo liga el llamador como $1 vía
-// lookupExactlyOneRow (este builder NO devuelve args: el valor no lo conoce).
-func buildRowLookupSQL(whitelist map[string][]string, table, keyColumn string, selectColumns []string) (string, error) {
+// <keyColumn> = $1 [AND <filtros>] LIMIT 2". Calca la validación de
+// buildOptionsSQL: valida la tabla con checkTable y CADA columna de selectColumns
+// MÁS keyColumn contra la lista blanca; un identificador fuera de lista ⇒
+// ErrWhitelist SIN producir SQL. selectColumns vacío ⇒ error que envuelve
+// ErrValidation. El LIMIT 2 es literal (detecta >1); el valor de la clave lo liga
+// el llamador como $1 vía lookupExactlyOneRow.
+//
+// filters acota la relectura a la MISMA sublista que usó buildOptionsSQL al
+// generar las opciones (p. ej. list_numero=10001), reutilizando
+// buildListConditionsWhere con la MISMA semántica (lower+trim, IN, AND) y la
+// MISMA validación de whitelist (ErrWhitelist sin SQL). Los args de los filtros
+// se numeran DESPUÉS de la clave ($2..$k) y se devuelven para que el llamador los
+// ligue tras el valor de la clave; con filters vacío el WHERE queda solo en la
+// clave y args es nil (comportamiento del salto derive-via-fk, sin filtros).
+func buildRowLookupSQL(whitelist map[string][]string, table, keyColumn string, selectColumns []string, filters []modules.ListCondition) (string, []any, error) {
 	if len(selectColumns) == 0 {
-		return "", fmt.Errorf("%w: la relectura de fila requiere al menos una columna a proyectar", ErrValidation)
+		return "", nil, fmt.Errorf("%w: la relectura de fila requiere al menos una columna a proyectar", ErrValidation)
 	}
 	if err := checkTable(whitelist, table); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	allowedSet := make(map[string]struct{}, len(whitelist[table]))
 	for _, c := range whitelist[table] {
 		allowedSet[c] = struct{}{}
 	}
 	if _, ok := allowedSet[keyColumn]; !ok {
-		return "", fmt.Errorf("%w: columna clave %q en la tabla %q", ErrWhitelist, keyColumn, table)
+		return "", nil, fmt.Errorf("%w: columna clave %q en la tabla %q", ErrWhitelist, keyColumn, table)
 	}
 	for _, col := range selectColumns {
 		if _, ok := allowedSet[col]; !ok {
-			return "", fmt.Errorf("%w: columna %q en la tabla %q", ErrWhitelist, col, table)
+			return "", nil, fmt.Errorf("%w: columna %q en la tabla %q", ErrWhitelist, col, table)
 		}
 	}
+	// Filtros del catálogo numerados DESPUÉS de la clave ($2..$k); cada columna de
+	// filtro se valida contra la lista blanca ⇒ ErrWhitelist SIN producir SQL.
+	condClause, condArgs, err := buildListConditionsWhere(whitelist, table, filters, 2)
+	if err != nil {
+		return "", nil, err
+	}
+	whereSQL := quoteIdent(keyColumn) + " = $1"
+	if condClause != "" {
+		whereSQL += " AND " + condClause
+	}
 	sql := fmt.Sprintf(
-		"SELECT %s FROM %s WHERE %s = $1 LIMIT 2",
-		joinQuotedIdents(selectColumns), quoteIdent(table), quoteIdent(keyColumn),
+		"SELECT %s FROM %s WHERE %s LIMIT 2",
+		joinQuotedIdents(selectColumns), quoteIdent(table), whereSQL,
 	)
-	return sql, nil
+	return sql, condArgs, nil
 }
 
 // lookupExactlyOneRow ejecuta un SELECT (ya compuesto por buildRowLookupSQL)
@@ -1360,8 +1378,14 @@ func buildRowLookupSQL(whitelist map[string][]string, table, keyColumn string, s
 // filas (no es 1-a-1) o cualquier error de escaneo ⇒ ErrDeriveRelation (el
 // detalle real queda envuelto para el log). defer rows.Close() garantiza que la
 // conexión de la tx no se filtra en ninguna rama.
-func lookupExactlyOneRow(ctx context.Context, tx txExecer, query string, selectColumns []string, keyValue any) (map[string]any, error) {
-	rows, err := tx.QueryContext(ctx, query, keyValue)
+//
+// keyValue se liga como $1 y filterArgs (de buildRowLookupSQL) como $2..$k, en
+// ese orden, de modo que el bind calce con los marcadores del WHERE.
+func lookupExactlyOneRow(ctx context.Context, tx txExecer, query string, selectColumns []string, keyValue any, filterArgs []any) (map[string]any, error) {
+	args := make([]any, 0, 1+len(filterArgs))
+	args = append(args, keyValue)
+	args = append(args, filterArgs...)
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: error ejecutando la relectura: %v", ErrDeriveRelation, err)
 	}
@@ -1385,7 +1409,8 @@ func lookupExactlyOneRow(ctx context.Context, tx txExecer, query string, selectC
 //     el valor es el id; en otro caso (o si alimenta derivaciones) relee la fila
 //     del catálogo UNA vez y la cachea por CaptureKey; INV-5
 //     input[name]=fila[StoreColumn].
-//  2. relectura por CaptureKey (buildRowLookupSQL) exigiendo exactamente 1 fila.
+//  2. relectura por CaptureKey (buildRowLookupSQL, con los filtros del catálogo)
+//     exigiendo exactamente 1 fila.
 //  3. derive-from-option: toma Attribute de la fila del catálogo capturado.
 //  4. derive-via-fk: AGRUPA por salto (dedup), un SELECT por salto proyectando la
 //     unión de atributos, exige 1 fila, escribe input[name]=fila[Mapping[0].Attribute];
@@ -1524,13 +1549,15 @@ func resolveFillStrategies(ctx context.Context, tx txExecer, whitelist map[strin
 			}
 			localValue = normalizeSQLValue(row[k.localAttribute])
 		}
-		// UN SELECT por salto proyectando la unión de atributos del grupo.
+		// UN SELECT por salto proyectando la unión de atributos del grupo. El salto
+		// NO lleva filtros de catálogo (su Jump no los declara): la relectura por
+		// la FK queda solo acotada por la clave.
 		sort.Strings(g.attributes)
-		query, err := buildRowLookupSQL(whitelist, k.relatedTable, k.relatedColumn, g.attributes)
+		query, _, err := buildRowLookupSQL(whitelist, k.relatedTable, k.relatedColumn, g.attributes, nil)
 		if err != nil {
 			return nil, err
 		}
-		row, err := lookupExactlyOneRow(ctx, tx, query, g.attributes, localValue)
+		row, err := lookupExactlyOneRow(ctx, tx, query, g.attributes, localValue, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -1565,7 +1592,11 @@ type captureState struct {
 // reloadCatalogRow relee (y cachea en la captura) la fila del catálogo de una
 // captura capture-from-catalog por su id, proyectando TODAS las columnas de la
 // lista blanca de la tabla del catálogo (para que cualquier atributo derivado
-// esté disponible). Exige exactamente una fila (ErrDeriveRelation en otro caso).
+// esté disponible). Aplica los MISMOS filtros (s.Catalog.Filters) que usó
+// buildOptionsSQL al generar las opciones, de modo que la relectura por id quede
+// acotada a la misma sublista: sin ellos, un idColumn no único entre listas
+// (p. ej. valo_numero en gt_valores) devolvería >1 fila. Exige exactamente una
+// fila (ErrDeriveRelation en otro caso).
 func reloadCatalogRow(ctx context.Context, tx txExecer, whitelist map[string][]string, captures map[string]*captureState, s *modules.FillStrategy) (map[string]any, error) {
 	// Localiza la captura por su estrategia para cachear la fila (evita releer dos
 	// veces el mismo catálogo).
@@ -1587,11 +1618,11 @@ func reloadCatalogRow(ctx context.Context, tx txExecer, whitelist map[string][]s
 		return nil, fmt.Errorf("%w: la captura del catálogo %q no tiene id para releer", ErrDeriveRelation, s.Catalog.Table)
 	}
 	cols := whitelistedColumns(whitelist, s.Catalog.Table)
-	query, err := buildRowLookupSQL(whitelist, s.Catalog.Table, s.Catalog.IDColumn, cols)
+	query, filterArgs, err := buildRowLookupSQL(whitelist, s.Catalog.Table, s.Catalog.IDColumn, cols, s.Catalog.Filters)
 	if err != nil {
 		return nil, err
 	}
-	row, err := lookupExactlyOneRow(ctx, tx, query, cols, idValue)
+	row, err := lookupExactlyOneRow(ctx, tx, query, cols, idValue, filterArgs)
 	if err != nil {
 		return nil, err
 	}
