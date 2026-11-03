@@ -296,7 +296,7 @@ export function AppSidebar() {
         </div>
       ) : null}
 
-      <nav className="flex-1 space-y-6 px-3 py-4" aria-label="Recursos">
+      <nav className="min-h-0 flex-1 space-y-6 overflow-y-auto px-3 py-4" aria-label="Recursos">
         {NAV_GROUPS.map((group) => {
           // Entradas visibles de este grupo; si no hay ninguna, se omite el
           // grupo completo (incluido su encabezado).
