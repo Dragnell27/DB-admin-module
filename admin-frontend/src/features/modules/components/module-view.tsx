@@ -1272,11 +1272,18 @@ export function ModuleView({ slug }: ModuleViewProps) {
     dynamicLabels,
   ]);
 
-  // Campos DINÁMICOS de la acción activa (los que cargan opciones del endpoint).
+  // Campos DINÁMICOS de la acción activa (los que cargan opciones del endpoint):
+  // los campos source==="dynamic" con dynamicSource Y las CAPTURAS de catálogo
+  // (source==="fillStrategy" + kind "capture-from-catalog"), que el backend
+  // resuelve en el MISMO endpoint /options/:field?action= (incl. __capture_*,
+  // INV-6). Las derivaciones/constantes/autogeneradas no cargan opciones.
   const dynamicFields = React.useMemo<ReadonlyArray<FieldSpec>>(
     () =>
       (activeAction?.inputFields ?? []).filter(
-        (f) => f.source === "dynamic" && f.dynamicSource != null,
+        (f) =>
+          (f.source === "dynamic" && f.dynamicSource != null) ||
+          (f.source === "fillStrategy" &&
+            f.strategy?.kind === "capture-from-catalog"),
       ),
     [activeAction],
   );
@@ -1404,6 +1411,23 @@ export function ModuleView({ slug }: ModuleViewProps) {
     return {
       ...activeAction,
       inputFields: activeAction.inputFields.map((f) => {
+        // Captura de catálogo (fillStrategy + capture-from-catalog): se renderiza
+        // como selector poblado por el MISMO endpoint /options/:field?action=; se
+        // enriquece con las opciones cargadas sin tocar su source (sigue siendo
+        // fillStrategy; isCatalogSelectorField lo reconoce como selector).
+        const isCapture =
+          f.source === "fillStrategy" &&
+          f.strategy?.kind === "capture-from-catalog";
+        if (isCapture) {
+          const status = optionsStatusForField(f.name);
+          const rawId = activeRow ? activeRow[f.name] : undefined;
+          return {
+            ...f,
+            options: [...optionsForField(f.name, rawId)],
+            optionsLoading: status.loading,
+            optionsError: status.error,
+          };
+        }
         // Se enriquece el campo si es dinámico por el FieldSpec o si su columna
         // homónima aporta una fuente dinámica propia (precedencia columna).
         if (f.source !== "dynamic" && !columnDynamicByField.has(f.name)) {

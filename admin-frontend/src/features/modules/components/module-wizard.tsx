@@ -50,6 +50,7 @@ import {
   moduleBaseSchema,
   selectFieldError,
   selectOptionsError,
+  strategyError,
   toDefinitionInput,
   type WizardState,
 } from "@/features/modules/schema";
@@ -222,6 +223,23 @@ export function ModuleWizard({ initial, editSlug, title }: ModuleWizardProps) {
           }
           if (f.source === "dynamic") {
             const err = dynamicFieldError(f);
+            if (err) {
+              return { ok: false, error: err };
+            }
+          }
+          if (f.source === "fillStrategy") {
+            // Capturas declaradas de la acción (clave de captura de cada
+            // capture-from-catalog) para validar que las derivaciones las
+            // referencien. El backend es la autoridad final.
+            const captureKeys = a.inputFields
+              .filter(
+                (g) =>
+                  g.source === "fillStrategy" &&
+                  g.strategy.kind === "capture-from-catalog",
+              )
+              .map((g) => g.strategy.captureKey.trim())
+              .filter((k) => k !== "");
+            const err = strategyError(f, captureKeys);
             if (err) {
               return { ok: false, error: err };
             }

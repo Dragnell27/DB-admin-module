@@ -12,10 +12,14 @@ import { z } from "zod";
 
 import type {
   ActionKind,
+  AttributeMap,
   ColumnValueSource,
   DynamicSource,
   FieldSpec,
   FieldType,
+  FillStrategy,
+  FillStrategyKind,
+  FkJump,
   JoinConstant,
   JoinType,
   ListCondition,
@@ -25,6 +29,7 @@ import type {
   Placement,
   SelectOption,
   SourceType,
+  UniquenessCheck,
 } from "@/features/modules/types";
 
 /** slug kebab-case: minúsculas y dígitos separados por guiones simples. */
@@ -56,6 +61,49 @@ export const moduleBaseSchema = z.object({
   name: z.string().trim().min(1, "El nombre es obligatorio"),
 });
 
+/**
+ * Estado de formulario de una estrategia de llenado (source === "fillStrategy").
+ * Más rico que `FillStrategy` del BFF: el catálogo de `capture-from-catalog` usa
+ * el MISMO shape de formulario que un campo dinámico (`dynamicSource` plano +
+ * `dynamicFilters` por comas), convertido a `strategy.catalog` en
+ * `toDefinitionInput`. Las claves de todos los `kind` coexisten para no perder lo
+ * capturado al cambiar de estrategia; `toStrategy` emite solo las del `kind`.
+ */
+export interface StrategyFormState {
+  kind: FillStrategyKind;
+  /** capture-from-catalog: catálogo (tabla/id/label/orden/límite) del selector. */
+  catalog: DynamicSource;
+  /** capture-from-catalog: filtros del catálogo (shape de formulario, por comas). */
+  catalogFilters: ConditionFormState[];
+  /** capture-from-catalog: columna de la fila elegida que se guarda (def. idColumn). */
+  storeColumn: string;
+  /** capture-from-catalog: identificador lógico de la captura. */
+  captureKey: string;
+  /** derive-from-option: captureKey de la captura de la que se relee la fila. */
+  sourceCaptureKey: string;
+  /** derive-from-option: atributo de la fila del catálogo a escribir. */
+  attribute: string;
+  /** derive-via-fk: definición del salto FK 1-a-1. */
+  jump: FkJump;
+  /** derive-via-fk: mapeo atributo→columna (una entrada; targetColumn == name). */
+  mapping: AttributeMap[];
+}
+
+/** Estado inicial de una estrategia (kind "constant": sin sub-campos propios). */
+export function emptyStrategyFormState(): StrategyFormState {
+  return {
+    kind: "constant",
+    catalog: { table: "", idColumn: "", labelColumn: "", order: { column: "", direction: "asc" } },
+    catalogFilters: [],
+    storeColumn: "",
+    captureKey: "",
+    sourceCaptureKey: "",
+    attribute: "",
+    jump: { relatedTable: "", localCaptureKey: "", localAttribute: "", relatedColumn: "" },
+    mapping: [],
+  };
+}
+
 /** Estado de un campo de entrada en el formulario del asistente. */
 export interface FieldFormState {
   name: string;
@@ -68,7 +116,7 @@ export interface FieldFormState {
    * "dynamic" (lista dinámica cargada de una tabla de catálogo en ejecución,
    * definida en `dynamicSource` con filtros en `dynamicFilters`).
    */
-  source: "input" | "row" | "constant" | "select" | "dynamic";
+  source: "input" | "row" | "constant" | "select" | "dynamic" | "fillStrategy";
   /** Si source === "row": campo de la fila del que se toma el valor. */
   rowField: string;
   /** Si source === "constant": valor literal que se envía siempre. */
@@ -97,6 +145,13 @@ export interface FieldFormState {
    */
   hidden: boolean;
   /**
+   * Si source === "fillStrategy": estado de formulario de la estrategia de
+   * llenado. Siempre presente (default `emptyStrategyFormState()`) para que
+   * cambiar de origen no pierda lo capturado; `toDefinitionInput` emite
+   * `strategy` SOLO cuando source === "fillStrategy".
+   */
+  strategy: StrategyFormState;
+  /**
    * MULTI-TABLA: tabla de origen de la columna objetivo cuando es homónima. Solo
    * se emite en toDefinitionInput si es no vacía. Ausente ⇒ principal.
    */
@@ -107,6 +162,21 @@ export interface FieldFormState {
    * autoridad de la semántica SQL; se ignora en INSERT/UPDATE/DELETE.
    */
   matchType?: "exact" | "partial";
+}
+
+/**
+ * Estado de formulario de la comprobación de unicidad de una acción create.
+ * `columns` son columnas de la tabla objetivo; `message` el aviso de negocio al
+ * chocar. `toDefinitionInput` emite `uniqueness` solo si `columns` no está vacío.
+ */
+export interface UniquenessFormState {
+  columns: string[];
+  message: string;
+}
+
+/** Estado inicial de la comprobación de unicidad (sin columnas ⇒ no se emite). */
+export function emptyUniquenessFormState(): UniquenessFormState {
+  return { columns: [], message: "" };
 }
 
 /** Estado de una acción en el formulario del asistente. */
@@ -124,6 +194,12 @@ export interface ActionFormState {
   deleteTopTable?: string;
   /** MULTI-TABLA (create): tabla objetivo del INSERT. Vacío ⇒ principal. */
   targetTable?: string;
+  /**
+   * MULTI-TABLA (create): comprobación de unicidad. Siempre presente en el estado
+   * (default `{ columns: [], message: "" }`); `toDefinitionInput` emite
+   * `uniqueness` SOLO cuando hay al menos una columna (patrón omitempty).
+   */
+  uniqueness: UniquenessFormState;
   /**
    * EFÍMERO (solo estado del asistente): el usuario ya editó la `actionKey` a
    * mano, por lo que deja de autoderivarse del label. No viaja al backend
@@ -753,6 +829,77 @@ function toDynamicSource(f: FieldFormState): DynamicSource {
 }
 
 /**
+ * Construye la `FillStrategy` del BFF a partir del estado de formulario de un
+ * campo source === "fillStrategy". Emite SOLO los sub-campos propios del `kind`
+ * (patrón omitempty, espejo de los `omitempty` del backend), de modo que una
+ * estrategia `constant` o `autogenerated` produce `{ kind }` sin ruido:
+ *   - capture-from-catalog: `catalog` (reutiliza el núcleo plano de dynamic) +
+ *     `storeColumn`/`captureKey` solo si no están vacíos.
+ *   - derive-from-option: `sourceCaptureKey` + `attribute`.
+ *   - derive-via-fk: `jump` + `mapping`.
+ *   - constant/autogenerated: sin sub-campos.
+ */
+function toStrategy(s: StrategyFormState): FillStrategy {
+  switch (s.kind) {
+    case "capture-from-catalog":
+      return {
+        kind: s.kind,
+        catalog: toDynamicSourceCore({
+          dynamicSource: s.catalog,
+          dynamicFilters: s.catalogFilters,
+        }),
+        storeColumn: s.storeColumn.trim() !== "" ? s.storeColumn.trim() : undefined,
+        captureKey: s.captureKey.trim() !== "" ? s.captureKey.trim() : undefined,
+      };
+    case "derive-from-option":
+      return {
+        kind: s.kind,
+        sourceCaptureKey:
+          s.sourceCaptureKey.trim() !== "" ? s.sourceCaptureKey.trim() : undefined,
+        attribute: s.attribute.trim() !== "" ? s.attribute.trim() : undefined,
+      };
+    case "derive-via-fk":
+      return {
+        kind: s.kind,
+        jump: {
+          relatedTable: s.jump.relatedTable.trim(),
+          localCaptureKey: s.jump.localCaptureKey.trim(),
+          localAttribute: s.jump.localAttribute.trim(),
+          relatedColumn: s.jump.relatedColumn.trim(),
+        },
+        mapping:
+          s.mapping.length > 0
+            ? s.mapping.map((m) => ({
+                attribute: m.attribute.trim(),
+                targetColumn: m.targetColumn.trim(),
+              }))
+            : undefined,
+      };
+    case "constant":
+    case "autogenerated":
+    default:
+      return { kind: s.kind };
+  }
+}
+
+/**
+ * Construye el `UniquenessCheck` del BFF a partir del estado de formulario. Se
+ * OMITE (undefined) cuando no hay columnas (patrón omitempty, JSONB idéntico al
+ * histórico); si las hay, emite `columns` (trim, sin vacíos) y `message` solo si
+ * no está vacío.
+ */
+function toUniqueness(u: UniquenessFormState): UniquenessCheck | undefined {
+  const columns = u.columns.map((c) => c.trim()).filter((c) => c !== "");
+  if (columns.length === 0) {
+    return undefined;
+  }
+  return {
+    columns,
+    message: u.message.trim() !== "" ? u.message.trim() : undefined,
+  };
+}
+
+/**
  * Construye el `valueSource` del BFF a partir del estado de fuente de valores
  * de una columna. Devuelve undefined cuando `kind === "none"` (se OMITE el
  * campo => JSONB idéntico al histórico, retrocompat byte a byte); `static`
@@ -805,6 +952,8 @@ export function toDefinitionInput(state: WizardState): ModuleDefinitionInput {
       a.kind === "create" && a.targetTable && a.targetTable !== principal
         ? a.targetTable
         : undefined,
+    // uniqueness solo en create y solo si hay columnas declaradas (omitempty).
+    uniqueness: a.kind === "create" ? toUniqueness(a.uniqueness) : undefined,
     inputFields: a.inputFields.map(
       (f): FieldSpec => ({
         name: f.name,
@@ -816,6 +965,9 @@ export function toDefinitionInput(state: WizardState): ModuleDefinitionInput {
         options: f.source === "select" ? f.options : undefined,
         defaultValue: f.source === "select" ? (f.defaultValue || undefined) : undefined,
         dynamicSource: f.source === "dynamic" ? toDynamicSource(f) : undefined,
+        // strategy solo cuando source === "fillStrategy" (patrón omitempty,
+        // idéntico a dynamicSource); el resto de orígenes lo omite.
+        strategy: f.source === "fillStrategy" ? toStrategy(f.strategy) : undefined,
         hidden: f.source === "constant" ? f.hidden || undefined : undefined,
         // sourceTable solo se emite si la columna es homónima (no es la principal).
         sourceTable:
@@ -992,6 +1144,115 @@ function columnValueSourceFromDefinition(
   return empty;
 }
 
+/**
+ * Reconstruye el estado de formulario de una estrategia de llenado a partir del
+ * `strategy` JSON (tolerante). Inverso de `toStrategy`:
+ *   - ausente / kind no reconocido ⇒ `emptyStrategyFormState()` (kind "constant").
+ *   - capture-from-catalog ⇒ catálogo + filtros (igual que un campo dinámico) +
+ *     storeColumn/captureKey.
+ *   - derive-from-option ⇒ sourceCaptureKey + attribute.
+ *   - derive-via-fk ⇒ jump + mapping.
+ * Función pura; nunca lanza. Las claves de los demás `kind` quedan por defecto.
+ */
+function strategyFromDefinition(raw: unknown): StrategyFormState {
+  const empty = emptyStrategyFormState();
+  if (!raw || typeof raw !== "object") {
+    return empty;
+  }
+  const s = raw as {
+    kind?: unknown;
+    catalog?: {
+      table?: unknown;
+      idColumn?: unknown;
+      labelColumn?: unknown;
+      order?: OrderSpec;
+      limit?: unknown;
+      filters?: Array<{ field?: unknown; values?: unknown }>;
+    };
+    storeColumn?: unknown;
+    captureKey?: unknown;
+    sourceCaptureKey?: unknown;
+    attribute?: unknown;
+    jump?: {
+      relatedTable?: unknown;
+      localCaptureKey?: unknown;
+      localAttribute?: unknown;
+      relatedColumn?: unknown;
+    };
+    mapping?: Array<{ attribute?: unknown; targetColumn?: unknown }>;
+  };
+  const kind = s.kind;
+  if (kind === "capture-from-catalog") {
+    const cat = s.catalog ?? {};
+    return {
+      ...empty,
+      kind,
+      catalog: {
+        table: typeof cat.table === "string" ? cat.table : "",
+        idColumn: typeof cat.idColumn === "string" ? cat.idColumn : "",
+        labelColumn: typeof cat.labelColumn === "string" ? cat.labelColumn : "",
+        order: cat.order ?? { column: "", direction: "asc" },
+        limit: typeof cat.limit === "number" ? cat.limit : undefined,
+      },
+      catalogFilters: (cat.filters ?? []).map((cond) => ({
+        field: String(cond.field ?? ""),
+        valuesText: (Array.isArray(cond.values) ? (cond.values as unknown[]) : [])
+          .map((v) => String(v))
+          .join(", "),
+      })),
+      storeColumn: typeof s.storeColumn === "string" ? s.storeColumn : "",
+      captureKey: typeof s.captureKey === "string" ? s.captureKey : "",
+    };
+  }
+  if (kind === "derive-from-option") {
+    return {
+      ...empty,
+      kind,
+      sourceCaptureKey: typeof s.sourceCaptureKey === "string" ? s.sourceCaptureKey : "",
+      attribute: typeof s.attribute === "string" ? s.attribute : "",
+    };
+  }
+  if (kind === "derive-via-fk") {
+    const j = s.jump ?? {};
+    return {
+      ...empty,
+      kind,
+      jump: {
+        relatedTable: typeof j.relatedTable === "string" ? j.relatedTable : "",
+        localCaptureKey: typeof j.localCaptureKey === "string" ? j.localCaptureKey : "",
+        localAttribute: typeof j.localAttribute === "string" ? j.localAttribute : "",
+        relatedColumn: typeof j.relatedColumn === "string" ? j.relatedColumn : "",
+      },
+      mapping: (s.mapping ?? []).map((m) => ({
+        attribute: String(m.attribute ?? ""),
+        targetColumn: String(m.targetColumn ?? ""),
+      })),
+    };
+  }
+  if (kind === "autogenerated") {
+    return { ...empty, kind };
+  }
+  // "constant" o kind ausente/no reconocido ⇒ estado por defecto (constant).
+  return empty;
+}
+
+/**
+ * Reconstruye el estado de formulario de la comprobación de unicidad a partir del
+ * `uniqueness` JSON (tolerante). Inverso de `toUniqueness`: ausente ⇒ estado
+ * vacío (sin columnas); presente ⇒ columnas (como strings) y mensaje. Función
+ * pura; nunca lanza.
+ */
+function uniquenessFromDefinition(raw: unknown): UniquenessFormState {
+  if (!raw || typeof raw !== "object") {
+    return emptyUniquenessFormState();
+  }
+  const u = raw as { columns?: unknown; message?: unknown };
+  return {
+    columns: Array.isArray(u.columns) ? (u.columns as unknown[]).map((c) => String(c)) : [],
+    message: typeof u.message === "string" ? u.message : "",
+  };
+}
+
 export function fromDefinition(def: ModuleDefinitionInput): WizardState {
   const base = emptyWizardState();
   const fetch = def.fetchMapping ?? {};
@@ -1093,6 +1354,8 @@ export function fromDefinition(def: ModuleDefinitionInput): WizardState {
       sqlOp: a.sqlOp ?? "",
       deleteTopTable: a.deleteTopTable ?? "",
       targetTable: a.targetTable ?? "",
+      // uniqueness tolerante: ausente ⇒ estado vacío (no emite nada al reguardar).
+      uniqueness: uniquenessFromDefinition(a.uniqueness),
       inputFields: (a.inputFields ?? []).map((f) => ({
         name: f.name,
         type: f.type,
@@ -1127,6 +1390,9 @@ export function fromDefinition(def: ModuleDefinitionInput): WizardState {
           valuesText: (cond.values ?? []).join(", "),
         })),
         hidden: Boolean(f.hidden),
+        // Estrategia de llenado tolerante: ausente ⇒ estado por defecto; inverso
+        // de toStrategy (retrocompat, INV-9).
+        strategy: strategyFromDefinition(f.strategy),
       })),
     })),
   };
@@ -1241,6 +1507,76 @@ export function dynamicSourceError(
     return `El campo "${label}" de lista dinámica necesita una columna etiqueta`;
   }
   return null;
+}
+
+/**
+ * Valida una estrategia de llenado (source === "fillStrategy") antes de guardar,
+ * análogo a `dynamicFieldError`/`selectFieldError`. Devuelve el mensaje de error
+ * (español) de la PRIMERA regla incumplida, o null si es válida. Las capturas
+ * declaradas de la acción (`captureKeys`) se usan para comprobar que las
+ * derivaciones referencian una captura existente. NO sustituye la validación del
+ * backend (autoridad final). Reglas por `kind`:
+ *   - capture-from-catalog: catálogo completo (tabla/id/label) y clave de captura
+ *     no vacía.
+ *   - derive-from-option: `sourceCaptureKey` existente entre las capturas y
+ *     `attribute` no vacío.
+ *   - derive-via-fk: tabla/columna relacionadas, captura local existente,
+ *     atributo local, y al menos un mapeo con atributo y columna destino.
+ *   - constant / autogenerated: sin parámetros, siempre válidas.
+ */
+export function strategyError(
+  field: FieldFormState,
+  captureKeys: ReadonlyArray<string>,
+): string | null {
+  const label = field.name || "(sin nombre)";
+  const s = field.strategy;
+  const known = new Set(captureKeys);
+  switch (s.kind) {
+    case "capture-from-catalog": {
+      const dsErr = dynamicSourceError(s.catalog, label);
+      if (dsErr) {
+        return dsErr;
+      }
+      if (s.captureKey.trim() === "") {
+        return `La captura "${label}" necesita una clave de captura`;
+      }
+      return null;
+    }
+    case "derive-from-option": {
+      if (s.sourceCaptureKey.trim() === "" || !known.has(s.sourceCaptureKey.trim())) {
+        return `El campo "${label}" referencia una captura de origen inexistente`;
+      }
+      if (s.attribute.trim() === "") {
+        return `El campo "${label}" necesita un atributo de la opción`;
+      }
+      return null;
+    }
+    case "derive-via-fk": {
+      if (s.jump.relatedTable.trim() === "" || s.jump.relatedColumn.trim() === "") {
+        return `El campo "${label}" necesita la tabla y columna relacionadas`;
+      }
+      if (
+        s.jump.localCaptureKey.trim() === "" ||
+        !known.has(s.jump.localCaptureKey.trim())
+      ) {
+        return `El campo "${label}" referencia una captura local inexistente`;
+      }
+      if (s.jump.localAttribute.trim() === "") {
+        return `El campo "${label}" necesita un atributo local del salto`;
+      }
+      const maps = s.mapping.filter(
+        (m) => m.attribute.trim() !== "" && m.targetColumn.trim() !== "",
+      );
+      if (maps.length === 0) {
+        return `El campo "${label}" necesita al menos un mapeo atributo→columna`;
+      }
+      return null;
+    }
+    case "constant":
+    case "autogenerated":
+    default:
+      return null;
+  }
 }
 
 /**

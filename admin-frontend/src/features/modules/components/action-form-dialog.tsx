@@ -30,6 +30,7 @@ import {
   buildInitialValues,
   buildSubmitInput,
   getVisibleFields,
+  isCatalogSelectorField,
   validateRequired,
 } from "@/features/modules/components/action-form-dialog.logic";
 import type { ColumnField } from "@/features/modules/components/action-form-dialog.logic";
@@ -284,7 +285,7 @@ export function ActionFormDialog({
                     {fieldLabels[f.name] ?? f.name}
                     {f.required ? <span className="text-destructive-text"> *</span> : null}
                   </Label>
-                  {f.source === "select" || f.source === "dynamic" ? (
+                  {isCatalogSelectorField(f) ? (
                     <select
                       id={`field_${f.name}`}
                       className={selectClass}
@@ -305,13 +306,12 @@ export function ActionFormDialog({
                       ))}
                     </select>
                   ) : null}
-                  {(f.source === "select" || f.source === "dynamic") &&
-                  f.optionsError ? (
+                  {isCatalogSelectorField(f) && f.optionsError ? (
                     <p className="text-xs text-destructive-text">
                       No se pudieron cargar las opciones
                     </p>
                   ) : null}
-                  {f.source === "select" || f.source === "dynamic" ? null : f.type ===
+                  {isCatalogSelectorField(f) ? null : f.type ===
                     "boolean" ? (
                     <input
                       id={`field_${f.name}`}
