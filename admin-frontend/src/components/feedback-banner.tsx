@@ -31,10 +31,13 @@ export function FeedbackBanner({
 }: FeedbackBannerProps) {
   // Estilo e icono resueltos por `tone`: success (emerald/CheckCircle2),
   // error (destructive/AlertCircle) y warning (amber/AlertTriangle).
+  // Fondo OPACO (bg-card) + borde de color por tono. Antes el fondo era un tinte
+  // translúcido (bg-*/10) que dejaba transparentar lo de atrás; se reemplaza por
+  // superficie sólida para legibilidad, dejando el color en el borde/texto/icono.
   const toneStyles: Readonly<Record<FeedbackTone, string>> = {
-    success: "border-emerald-500/50 bg-emerald-500/10 text-ok-text",
-    error: "border-destructive/50 bg-destructive/10 text-destructive-text border-l-4 border-l-destructive",
-    warning: "border-amber-500/50 bg-amber-500/10 text-warn-text",
+    success: "border-emerald-500/50 bg-card text-ok-text",
+    error: "border-destructive/50 bg-card text-destructive-text border-l-4 border-l-destructive",
+    warning: "border-amber-500/50 bg-card text-warn-text",
   };
   const toneIcons: Readonly<Record<FeedbackTone, LucideIcon>> = {
     success: CheckCircle2,

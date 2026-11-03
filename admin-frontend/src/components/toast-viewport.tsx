@@ -36,10 +36,14 @@ import { useToast } from "@/lib/use-toast";
  * Mapas de tono → clases e icono, ESPEJO de `FeedbackBanner` para que los
  * toasts se vean nativos (mismos tokens del tema oscuro, sin hex crudo).
  */
+// Fondo OPACO (bg-card, aplicado en el contenedor) + barra lateral y borde de
+// color por tono. NO usar un tinte translúcido (bg-*/10) de fondo: sobre el
+// contenedor dejaba ver el contenido de atrás (toast "transparente"). La
+// identidad de color la dan el border-l-* y el texto/icono del tono.
 const toneStyles: Readonly<Record<ToastTone, string>> = {
-  success: "border-l-emerald-500 border-emerald-500/50 bg-emerald-500/10 text-ok-text",
-  error: "border-l-destructive border-destructive/50 bg-destructive/10 text-destructive-text",
-  warning: "border-l-amber-500 border-amber-500/50 bg-amber-500/10 text-warn-text",
+  success: "border-l-emerald-500 border-emerald-500/50 text-ok-text",
+  error: "border-l-destructive border-destructive/50 text-destructive-text",
+  warning: "border-l-amber-500 border-amber-500/50 text-warn-text",
 };
 const toneIcons: Readonly<Record<ToastTone, LucideIcon>> = {
   success: CheckCircle2,
