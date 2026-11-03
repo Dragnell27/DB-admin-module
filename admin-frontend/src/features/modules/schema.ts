@@ -162,6 +162,15 @@ export interface FieldFormState {
    * autoridad de la semántica SQL; se ignora en INSERT/UPDATE/DELETE.
    */
   matchType?: "exact" | "partial";
+  /**
+   * EFÍMERO (solo estado del asistente): identidad estable del campo para la key
+   * de React de su fila (ver `fieldRowKey`). Mismas garantías que
+   * `ActionFormState.uid`: opcional, NO se serializa, SOBREVIVE al spread de
+   * `updateField` (así elegir la columna `name:"" -> "x"` NO remonta ni colapsa
+   * la fila). Se siembra en `addField` (runtime) y en `fromDefinition`
+   * (hidratación determinista por posición `f:h<ai>_<fi>`).
+   */
+  uid?: string;
 }
 
 /**
@@ -207,6 +216,18 @@ export interface ActionFormState {
    * undefined).
    */
   keyTouched?: boolean;
+  /**
+   * EFÍMERO (solo estado del asistente): identidad estable de la acción para la
+   * key de React de su fila (ver `actionRowKey`). Modelado como `keyTouched`:
+   * opcional, NO se serializa (`toDefinitionInput` no lo emite) y SOBREVIVE al
+   * spread de `updateAction`. Se SIEMBRA en todas las factory/entradas de estado
+   * que crean acciones: `addAction` (runtime, `nextUid`) y `fromDefinition`
+   * (hidratación, determinista por posición `a:h<i>`, de modo que el módulo
+   * COPIADO vía `fromCopyableDefinition` también queda cubierto sin romper el
+   * round-trip `toEqual`). Corrección vinculante del usuario sobre el diseño:
+   * el uid se siembra en las factories/hidratación, no solo "al montar".
+   */
+  uid?: string;
 }
 
 /**
@@ -233,6 +254,46 @@ export function datalistActionKeys(
     }
   });
   return result;
+}
+
+/**
+ * Contador monótono de módulo para los uid de RUNTIME (`addAction`/`addField`).
+ * No entra al estado serializado ni se compara con `toEqual` en ningún test (las
+ * entidades creadas en runtime no se hidratan). Es un detalle de implementación
+ * para dar identidad estable y legible a las filas recién creadas.
+ */
+let uidCounter = 0;
+
+/**
+ * Genera un uid de RUNTIME único y estable con el prefijo dado (p. ej.
+ * `nextUid("a")` → `a1`, `a2`, …). Lo usan `addAction`/`addField` al crear una
+ * entidad nueva. No se usa `crypto.randomUUID` para que el valor sea
+ * determinista/legible en depuración y no dependa del entorno `node` de los
+ * tests; sin dependencias nuevas. Función con efecto (incrementa el contador).
+ */
+export function nextUid(prefix: string): string {
+  uidCounter += 1;
+  return `${prefix}${uidCounter}`;
+}
+
+/**
+ * Key de React estable para una acción: su uid efímero si lo tiene (runtime o
+ * hidratación), con fallback `a:__<index>` para entidades sin uid. Al depender
+ * del uid y NO del índice, borrar/mover otra acción no desalinea las instancias
+ * de React ni el estado local de sus filas. Función pura.
+ */
+export function actionRowKey(a: Pick<ActionFormState, "uid">, index: number): string {
+  return a.uid ? `a:${a.uid}` : `a:__${index}`;
+}
+
+/**
+ * Key de React estable para un campo: su uid efímero si lo tiene, con fallback
+ * `f:__<index>`. Como el uid SOBREVIVE al spread de `updateField`, la transición
+ * `name:"" -> "x"` al elegir la columna NO cambia la key y por tanto no remonta
+ * ni recolapsa la fila. Función pura.
+ */
+export function fieldRowKey(f: Pick<FieldFormState, "uid">, index: number): string {
+  return f.uid ? `f:${f.uid}` : `f:__${index}`;
 }
 
 /**
@@ -1367,7 +1428,7 @@ export function fromDefinition(def: ModuleDefinitionInput): WizardState {
       valuesText: (cond.values ?? []).join(", "),
       sourceTable: cond.sourceTable ?? "",
     })),
-    actions: (def.actions ?? []).map((a) => ({
+    actions: (def.actions ?? []).map((a, ai) => ({
       actionKey: a.actionKey,
       kind: a.kind,
       label: a.label,
@@ -1380,7 +1441,12 @@ export function fromDefinition(def: ModuleDefinitionInput): WizardState {
       targetTable: a.targetTable ?? "",
       // uniqueness tolerante: ausente ⇒ estado vacío (no emite nada al reguardar).
       uniqueness: uniquenessFromDefinition(a.uniqueness),
-      inputFields: (a.inputFields ?? []).map((f) => ({
+      // uid EFÍMERO determinista por posición: da identidad estable a la fila de
+      // la acción (incl. módulos COPIADOS vía fromCopyableDefinition). Al ser
+      // determinista por índice, dos hidrataciones de la misma definición
+      // producen uids idénticos y el round-trip `toEqual` sigue pasando.
+      uid: `h${ai}`,
+      inputFields: (a.inputFields ?? []).map((f, fi) => ({
         name: f.name,
         type: f.type,
         required: f.required,
@@ -1417,6 +1483,9 @@ export function fromDefinition(def: ModuleDefinitionInput): WizardState {
         // Estrategia de llenado tolerante: ausente ⇒ estado por defecto; inverso
         // de toStrategy (retrocompat, INV-9).
         strategy: strategyFromDefinition(f.strategy),
+        // uid EFÍMERO determinista por posición (ver comentario de la acción):
+        // cubre los campos de módulos hidratados/copiados sin romper `toEqual`.
+        uid: `h${ai}_${fi}`,
       })),
     })),
   };

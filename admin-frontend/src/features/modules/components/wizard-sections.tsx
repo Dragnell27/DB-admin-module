@@ -43,6 +43,7 @@ import type {
   SelectOption,
 } from "@/features/modules/types";
 import {
+  actionRowKey,
   buildColumnOptions,
   columnOptionValue,
   datalistActionKeys,
@@ -51,6 +52,8 @@ import {
   effectiveSqlOp,
   emptyStrategyFormState,
   emptyUniquenessFormState,
+  fieldRowKey,
+  nextUid,
   parseColumnOptionValue,
   permActionForKind,
   parseColumnList,
@@ -1918,6 +1921,9 @@ export function ActionsSection({ state, patch }: SectionProps) {
       inputFields: [],
       uniqueness: emptyUniquenessFormState(),
       keyTouched: false,
+      // uid EFÍMERO de runtime: identidad estable de la fila (key de React) que
+      // sobrevive a updateAction/removeAction y no se serializa.
+      uid: nextUid("a"),
     };
     patch({ actions: [...state.actions, next] });
   };
@@ -1971,6 +1977,9 @@ export function ActionsSection({ state, patch }: SectionProps) {
           dynamicFilters: [],
           hidden: false,
           strategy: emptyStrategyFormState(),
+          // uid EFÍMERO de runtime: sobrevive al spread de updateField, de modo
+          // que elegir la columna (name:"" -> "x") NO remonta ni colapsa la fila.
+          uid: nextUid("f"),
         },
       ],
     };
@@ -2033,7 +2042,7 @@ export function ActionsSection({ state, patch }: SectionProps) {
       </div>
 
       {state.actions.map((a, ai) => (
-        <Card key={ai}>
+        <Card key={actionRowKey(a, ai)}>
           <CardContent className="space-y-3 pt-6">
             <div className="grid gap-2 sm:grid-cols-3">
               <div className="space-y-1">
@@ -2170,7 +2179,7 @@ export function ActionsSection({ state, patch }: SectionProps) {
               </div>
               {a.inputFields.map((f, fi) => (
                 <ActionFieldRow
-                  key={fi}
+                  key={fieldRowKey(f, fi)}
                   index={fi}
                   field={f}
                   action={a}
