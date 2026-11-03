@@ -12,7 +12,7 @@ import "@testing-library/jest-dom/vitest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 
-import { defaultColumn, emptyWizardState, toDefinitionInput, type WizardState } from "@/features/modules/schema";
+import { defaultColumn, emptyUniquenessFormState, emptyWizardState, toDefinitionInput, type WizardState } from "@/features/modules/schema";
 import { getPageTitle, setPageTitle } from "@/lib/page-chrome";
 
 // --- Mocks de dependencias del componente -----------------------------------
@@ -80,6 +80,7 @@ function validEditState(): WizardState {
         isWrite: false,
         sqlOp: "SELECT",
         inputFields: [],
+        uniqueness: emptyUniquenessFormState(),
       },
     ],
   };

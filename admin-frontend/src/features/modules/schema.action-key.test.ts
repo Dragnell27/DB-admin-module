@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   datalistActionKeys,
+  emptyUniquenessFormState,
   slugifyActionKey,
   type ActionFormState,
 } from "@/features/modules/schema";
@@ -23,6 +24,7 @@ function action(actionKey: string): ActionFormState {
     isWrite: true,
     sqlOp: "",
     inputFields: [],
+    uniqueness: emptyUniquenessFormState(),
   };
 }
 

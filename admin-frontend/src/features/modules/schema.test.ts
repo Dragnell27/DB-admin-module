@@ -10,6 +10,8 @@ import {
   columnOptionValue,
   defaultColumn,
   dynamicFieldError,
+  emptyStrategyFormState,
+  emptyUniquenessFormState,
   emptyWizardState,
   fromCopyableDefinition,
   fromDefinition,
@@ -40,6 +42,7 @@ function baseField(overrides: Partial<FieldFormState> = {}): FieldFormState {
     dynamicSource: { table: "", idColumn: "", labelColumn: "", order: { column: "", direction: "asc" } },
     dynamicFilters: [],
     hidden: false,
+    strategy: emptyStrategyFormState(),
     ...overrides,
   };
 }
@@ -67,6 +70,7 @@ function stateWithFields(fields: FieldFormState[]): WizardState {
         isWrite: false,
         sqlOp: "SELECT",
         inputFields: fields,
+        uniqueness: emptyUniquenessFormState(),
       },
     ],
   };
@@ -220,6 +224,7 @@ describe("matchType de acción SELECT (omitempty) y retiro del buscador por colu
           isWrite: true,
           sqlOp: "UPDATE",
           inputFields: [baseField({ name: "nombre", source: "input", matchType: "partial" })],
+          uniqueness: emptyUniquenessFormState(),
         },
       ],
     };
@@ -488,7 +493,7 @@ describe("columnas: banderas visible/isPrimaryKey/editable", () => {
     const withEdit: WizardState = {
       ...emptyWizardState(),
       columns: [col({ field: "id", isPrimaryKey: false })],
-      actions: [{ actionKey: "edit", kind: "edit", label: "Editar", placement: "row", destructive: false, permAction: "editar", isWrite: true, sqlOp: "UPDATE", inputFields: [] }],
+      actions: [{ actionKey: "edit", kind: "edit", label: "Editar", placement: "row", destructive: false, permAction: "editar", isWrite: true, sqlOp: "UPDATE", inputFields: [], uniqueness: emptyUniquenessFormState() }],
     };
     expect(missingPrimaryKey(withEdit)).toBe(true);
 
@@ -501,7 +506,7 @@ describe("columnas: banderas visible/isPrimaryKey/editable", () => {
     const listOnly: WizardState = {
       ...emptyWizardState(),
       columns: [col({ field: "id" })],
-      actions: [{ actionKey: "list", kind: "list", label: "Listar", placement: "header", destructive: false, permAction: "ver", isWrite: false, sqlOp: "SELECT", inputFields: [] }],
+      actions: [{ actionKey: "list", kind: "list", label: "Listar", placement: "header", destructive: false, permAction: "ver", isWrite: false, sqlOp: "SELECT", inputFields: [], uniqueness: emptyUniquenessFormState() }],
     };
     expect(missingPrimaryKey(listOnly)).toBe(false);
   });

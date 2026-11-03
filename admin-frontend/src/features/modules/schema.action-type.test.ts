@@ -13,6 +13,8 @@ import {
   defaultPlacementForKind,
   deriveActionShape,
   effectiveSqlOp,
+  emptyStrategyFormState,
+  emptyUniquenessFormState,
   emptyWizardState,
   fromDefinition,
   permActionForKind,
@@ -34,6 +36,7 @@ function action(overrides: Partial<ActionFormState> = {}): ActionFormState {
     isWrite: true,
     sqlOp: "",
     inputFields: [],
+    uniqueness: emptyUniquenessFormState(),
     ...overrides,
   };
 }
@@ -219,6 +222,7 @@ describe("toDefinitionInput (normalización, borde 4)", () => {
               },
               dynamicFilters: [],
               hidden: false,
+              strategy: emptyStrategyFormState(),
               matchType: "partial",
             },
           ],
@@ -253,6 +257,7 @@ describe("toDefinitionInput (normalización, borde 4)", () => {
               },
               dynamicFilters: [],
               hidden: false,
+              strategy: emptyStrategyFormState(),
               matchType: "partial",
             },
           ],

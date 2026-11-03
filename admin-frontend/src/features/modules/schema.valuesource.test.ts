@@ -11,6 +11,7 @@ import {
   defaultColumn,
   dynamicFieldError,
   dynamicSourceError,
+  emptyStrategyFormState,
   emptyWizardState,
   fromDefinition,
   selectFieldError,
@@ -54,6 +55,7 @@ function baseField(overrides: Partial<FieldFormState> = {}): FieldFormState {
     dynamicSource: { table: "", idColumn: "", labelColumn: "", order: { column: "", direction: "asc" } },
     dynamicFilters: [],
     hidden: false,
+    strategy: emptyStrategyFormState(),
     ...overrides,
   };
 }

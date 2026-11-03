@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   defaultColumn,
   deleteOrder,
+  emptyUniquenessFormState,
   emptyWizardState,
   fromDefinition,
   isMultiTableState,
@@ -59,6 +60,7 @@ function multiState(): WizardState {
         sqlOp: "DELETE",
         inputFields: [],
         deleteTopTable: "clientes",
+        uniqueness: emptyUniquenessFormState(),
       },
     ],
   };
