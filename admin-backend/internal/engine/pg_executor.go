@@ -1326,31 +1326,32 @@ func isUniqueViolation(err error) bool {
 // tabla con checkTable y CADA columna de selectColumns MÁS keyColumn contra la
 // lista blanca; un identificador fuera de lista ⇒ ErrWhitelist SIN producir SQL.
 // selectColumns vacío ⇒ error que envuelve ErrValidation. El LIMIT 2 es literal
-// (detecta >1); el valor local viaja como $1.
-func buildRowLookupSQL(whitelist map[string][]string, table, keyColumn string, selectColumns []string) (string, []any, error) {
+// (detecta >1); el valor local lo liga el llamador como $1 vía
+// lookupExactlyOneRow (este builder NO devuelve args: el valor no lo conoce).
+func buildRowLookupSQL(whitelist map[string][]string, table, keyColumn string, selectColumns []string) (string, error) {
 	if len(selectColumns) == 0 {
-		return "", nil, fmt.Errorf("%w: la relectura de fila requiere al menos una columna a proyectar", ErrValidation)
+		return "", fmt.Errorf("%w: la relectura de fila requiere al menos una columna a proyectar", ErrValidation)
 	}
 	if err := checkTable(whitelist, table); err != nil {
-		return "", nil, err
+		return "", err
 	}
 	allowedSet := make(map[string]struct{}, len(whitelist[table]))
 	for _, c := range whitelist[table] {
 		allowedSet[c] = struct{}{}
 	}
 	if _, ok := allowedSet[keyColumn]; !ok {
-		return "", nil, fmt.Errorf("%w: columna clave %q en la tabla %q", ErrWhitelist, keyColumn, table)
+		return "", fmt.Errorf("%w: columna clave %q en la tabla %q", ErrWhitelist, keyColumn, table)
 	}
 	for _, col := range selectColumns {
 		if _, ok := allowedSet[col]; !ok {
-			return "", nil, fmt.Errorf("%w: columna %q en la tabla %q", ErrWhitelist, col, table)
+			return "", fmt.Errorf("%w: columna %q en la tabla %q", ErrWhitelist, col, table)
 		}
 	}
 	sql := fmt.Sprintf(
 		"SELECT %s FROM %s WHERE %s = $1 LIMIT 2",
 		joinQuotedIdents(selectColumns), quoteIdent(table), quoteIdent(keyColumn),
 	)
-	return sql, []any{keyColumn}, nil
+	return sql, nil
 }
 
 // lookupExactlyOneRow ejecuta un SELECT (ya compuesto por buildRowLookupSQL)
@@ -1525,7 +1526,7 @@ func resolveFillStrategies(ctx context.Context, tx txExecer, whitelist map[strin
 		}
 		// UN SELECT por salto proyectando la unión de atributos del grupo.
 		sort.Strings(g.attributes)
-		query, _, err := buildRowLookupSQL(whitelist, k.relatedTable, k.relatedColumn, g.attributes)
+		query, err := buildRowLookupSQL(whitelist, k.relatedTable, k.relatedColumn, g.attributes)
 		if err != nil {
 			return nil, err
 		}
@@ -1586,7 +1587,7 @@ func reloadCatalogRow(ctx context.Context, tx txExecer, whitelist map[string][]s
 		return nil, fmt.Errorf("%w: la captura del catálogo %q no tiene id para releer", ErrDeriveRelation, s.Catalog.Table)
 	}
 	cols := whitelistedColumns(whitelist, s.Catalog.Table)
-	query, _, err := buildRowLookupSQL(whitelist, s.Catalog.Table, s.Catalog.IDColumn, cols)
+	query, err := buildRowLookupSQL(whitelist, s.Catalog.Table, s.Catalog.IDColumn, cols)
 	if err != nil {
 		return nil, err
 	}
