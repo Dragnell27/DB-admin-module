@@ -14,7 +14,6 @@ import {
   defaultColumn,
   emptyUniquenessFormState,
   emptyWizardState,
-  toDefinitionInput,
   type WizardState,
 } from "@/features/modules/schema";
 import { setPageTitle } from "@/lib/page-chrome";
