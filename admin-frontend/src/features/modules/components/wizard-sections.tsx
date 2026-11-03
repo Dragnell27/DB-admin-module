@@ -47,6 +47,7 @@ import {
   buildColumnOptions,
   columnOptionValue,
   datalistActionKeys,
+  declaredCaptureKeys,
   defaultPlacementForKind,
   deriveActionShape,
   effectiveSqlOp,
@@ -135,31 +136,6 @@ function isWriteColumnAction(a: ActionFormState): boolean {
   // construcción. Depender solo del kind mantiene el modo columna aunque una
   // definición vieja venga con sqlOp incoherente.
   return a.kind === "create" || a.kind === "edit";
-}
-
-/**
- * `captureKey` declarados por las capturas de catálogo de una acción, EXCLUYENDO
- * el campo de índice `selfIndex`. Sirve para poblar los desplegables de
- * `sourceCaptureKey`/`localCaptureKey` de las derivaciones con las capturas
- * existentes (trim no vacío, sin duplicados, orden de aparición). Función pura.
- */
-function declaredCaptureKeys(a: ActionFormState, selfIndex: number): string[] {
-  const seen = new Set<string>();
-  const result: string[] = [];
-  a.inputFields.forEach((f, i) => {
-    if (i === selfIndex) {
-      return;
-    }
-    if (f.source !== "fillStrategy" || f.strategy.kind !== "capture-from-catalog") {
-      return;
-    }
-    const key = f.strategy.captureKey.trim();
-    if (key !== "" && !seen.has(key)) {
-      seen.add(key);
-      result.push(key);
-    }
-  });
-  return result;
 }
 
 /** Etiqueta legible del tipo de un campo de entrada (para resúmenes). */
