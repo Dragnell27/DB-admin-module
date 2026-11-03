@@ -37,6 +37,14 @@ func (f *fakeTx) ExecContext(ctx context.Context, query string, args ...any) (sq
 	return fakeResult{affected: 1}, nil
 }
 
+// QueryContext satisface la ampliación aditiva de txExecer (fase 1). Los tests
+// de execMultiUpdate/execMultiDelete/execSingleInsert NO ejecutan SELECT, así
+// que el stub devuelve un error: no puede fabricar *sql.Rows (tipo concreto). La
+// resolución de estrategias se prueba con un *sql.Tx real sobre el fake driver.
+func (f *fakeTx) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	return nil, errors.New("no soportado")
+}
+
 // writeCols arma las columnas resueltas multi-tabla para pagos ← clientes.
 func writeCols() []modules.ResolvedColumn {
 	return []modules.ResolvedColumn{

@@ -24,6 +24,12 @@ type recordedDriver struct {
 	began     int      // nº de BEGIN (transacciones abiertas)
 	committed int
 	rolled    int
+	// queryResponder, si no es nil, decide las filas que devuelve un QueryContext
+	// dado el SQL y los argumentos. Devuelve (cols, filas, true) para fabricar un
+	// driver.Rows paramétrico; false para caer al comportamiento por defecto
+	// (countRows para SELECT COUNT, emptyRows en otro caso). Permite probar
+	// resolveFillStrategies con un *sql.Tx real sobre este driver.
+	queryResponder func(query string, args []driver.NamedValue) ([]string, [][]driver.Value, bool)
 }
 
 func (d *recordedDriver) reset() {
@@ -62,7 +68,13 @@ func (c *recordedConn) ExecContext(ctx context.Context, query string, args []dri
 func (c *recordedConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
 	c.drv.mu.Lock()
 	c.drv.queries = append(c.drv.queries, query)
+	responder := c.drv.queryResponder
 	c.drv.mu.Unlock()
+	if responder != nil {
+		if cols, rows, ok := responder(query, args); ok {
+			return &paramRows{cols: cols, data: rows}, nil
+		}
+	}
 	if strings.HasPrefix(strings.TrimSpace(strings.ToUpper(query)), "SELECT COUNT") {
 		return &countRows{}, nil
 	}
@@ -111,6 +123,25 @@ func (r *emptyRows) Columns() []string { return []string{"c"} }
 func (r *emptyRows) Close() error      { return nil }
 func (r *emptyRows) Next(dest []driver.Value) error {
 	return io.EOF
+}
+
+// paramRows: filas parametrizadas por el queryResponder (columnas + valores)
+// para probar la relectura de catálogo/salto de resolveFillStrategies.
+type paramRows struct {
+	cols []string
+	data [][]driver.Value
+	i    int
+}
+
+func (r *paramRows) Columns() []string { return r.cols }
+func (r *paramRows) Close() error      { return nil }
+func (r *paramRows) Next(dest []driver.Value) error {
+	if r.i >= len(r.data) {
+		return io.EOF
+	}
+	copy(dest, r.data[r.i])
+	r.i++
+	return nil
 }
 
 // countRows: devuelve una sola fila con un count de 0.

@@ -658,6 +658,15 @@ func (e *PGExecutor) Exec(ctx context.Context, def modules.Definition, country s
 	input = applyConstantFields(act, input)
 
 	if !spec.IsMultiTable() {
+		// Camino N=1. INV-3: una acción INSERT con TargetTable y estrategias de
+		// llenado DEBE resolverse dentro de una transacción (los SELECT de
+		// catálogo/salto comparten snapshot). El guardado garantiza que una acción
+		// con estrategias declara TargetTable; aun así, si llega esa combinación en
+		// N=1 (config consistente sin tablas foráneas) se abre la tx aquí.
+		op := strings.ToUpper(strings.TrimSpace(act.SQLOp))
+		if op == "INSERT" && act.TargetTable != "" && needsResolutionTx(act) {
+			return e.execInsertWithStrategies(ctx, def, spec, act, input)
+		}
 		// --- Camino N=1 byte-por-byte: una sentencia, SIN transacción ---
 		table := stringFromConfig(def.FetchMapping, "table", "")
 		if err := checkTable(def.DataSource.PGWhitelist, table); err != nil {
@@ -699,7 +708,16 @@ func (e *PGExecutor) Exec(ctx context.Context, def modules.Definition, country s
 	case "DELETE":
 		affected, err = execMultiDelete(ctx, tx, def.DataSource.PGWhitelist, cols, spec, act, input)
 	case "INSERT":
-		affected, err = execSingleInsert(ctx, tx, def.DataSource.PGWhitelist, cols, spec, act, input)
+		insertInput := input
+		if needsResolutionTx(act) {
+			// Resuelve las estrategias de llenado ANTES del INSERT, dentro de la
+			// MISMA tx (INV-3). Sin estrategias, insertInput es el input tal cual
+			// (byte-por-byte como hoy, INV-9). execSingleInsert/buildWriteSQL no cambian.
+			insertInput, err = resolveFillStrategies(ctx, tx, def.DataSource.PGWhitelist, act, insertInput)
+		}
+		if err == nil {
+			affected, err = execSingleInsert(ctx, tx, def.DataSource.PGWhitelist, cols, spec, act, insertInput)
+		}
 	default:
 		err = fmt.Errorf("engine: operación SQL no soportada %q", op)
 	}
@@ -713,10 +731,12 @@ func (e *PGExecutor) Exec(ctx context.Context, def modules.Definition, country s
 	return map[string]any{"rowsAffected": affected}, inferObjectID(input), nil
 }
 
-// txExecer abstrae ExecContext para que execMulti* operen sobre *sql.Tx (o un
-// doble en pruebas).
+// txExecer abstrae ExecContext/QueryContext para que execMulti* y
+// resolveFillStrategies operen sobre *sql.Tx (o un doble en pruebas). La
+// ampliación con QueryContext es ADITIVA: *sql.Tx ya satisface ambos métodos.
 type txExecer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
 // pkValuePresent aplica la definición EXACTA de "presente" del valor de PK en
@@ -1139,6 +1159,331 @@ func whitelistedColumns(whitelist map[string][]string, table string) []string {
 	cols := append([]string(nil), whitelist[table]...)
 	sort.Strings(cols)
 	return cols
+}
+
+// needsResolutionTx indica si una acción INSERT necesita abrir la transacción de
+// resolución (INV-3): hoy, cuando declara estrategias de llenado
+// (HasFillStrategies). FEAT-002 ampliará este predicado con act.Uniqueness != nil.
+// La tabla objetivo (act.TargetTable != "") la comprueba el llamador.
+func needsResolutionTx(act modules.Action) bool {
+	return modules.HasFillStrategies(act)
+}
+
+// execInsertWithStrategies abre una transacción en el camino N=1 para resolver
+// las estrategias de llenado y ejecutar el INSERT single-table dentro del mismo
+// snapshot. Revierte ante cualquier error de resolución o de INSERT.
+func (e *PGExecutor) execInsertWithStrategies(ctx context.Context, def modules.Definition, spec modules.MultiTableSpec, act modules.Action, input map[string]any) (any, string, error) {
+	cols := modules.ColumnsFromDisplayMappingWithPrincipal(def.DisplayMapping, spec.PrincipalTable)
+	db, err := e.pool(ctx, def)
+	if err != nil {
+		return nil, "", err
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("engine: no se pudo abrir la transacción: %w", err)
+	}
+	resolved, err := resolveFillStrategies(ctx, tx, def.DataSource.PGWhitelist, act, input)
+	if err != nil {
+		_ = tx.Rollback()
+		return nil, "", err
+	}
+	affected, err := execSingleInsert(ctx, tx, def.DataSource.PGWhitelist, cols, spec, act, resolved)
+	if err != nil {
+		_ = tx.Rollback()
+		return nil, "", err
+	}
+	if cerr := tx.Commit(); cerr != nil {
+		return nil, "", fmt.Errorf("engine: no se pudo confirmar la transacción: %w", cerr)
+	}
+	return map[string]any{"rowsAffected": affected}, inferObjectID(input), nil
+}
+
+// ErrDeriveRelation es el error de negocio que resolveFillStrategies devuelve
+// (envuelto) cuando una estrategia de llenado no puede resolverse: un
+// captureKey/sourceCaptureKey/localCaptureKey sin declarar, o una relectura de
+// catálogo/salto que no devuelve EXACTAMENTE una fila (0 ⇒ no existe la relación;
+// >1 ⇒ no es 1-a-1). El handler lo mapea a E422_DERIVE con un mensaje FIJO de
+// negocio (sin concatenar err.Error()); el detalle queda solo en logs del motor.
+var ErrDeriveRelation = errors.New("engine: no se pudo resolver la relación")
+
+// buildRowLookupSQL compone el SELECT acotado que relee una fila por una columna
+// clave (catálogo o salto FK): "SELECT <selectColumns> FROM <table> WHERE
+// <keyColumn> = $1 LIMIT 2". Calca la validación de buildOptionsSQL: valida la
+// tabla con checkTable y CADA columna de selectColumns MÁS keyColumn contra la
+// lista blanca; un identificador fuera de lista ⇒ ErrWhitelist SIN producir SQL.
+// selectColumns vacío ⇒ error que envuelve ErrValidation. El LIMIT 2 es literal
+// (detecta >1); el valor local viaja como $1.
+func buildRowLookupSQL(whitelist map[string][]string, table, keyColumn string, selectColumns []string) (string, []any, error) {
+	if len(selectColumns) == 0 {
+		return "", nil, fmt.Errorf("%w: la relectura de fila requiere al menos una columna a proyectar", ErrValidation)
+	}
+	if err := checkTable(whitelist, table); err != nil {
+		return "", nil, err
+	}
+	allowedSet := make(map[string]struct{}, len(whitelist[table]))
+	for _, c := range whitelist[table] {
+		allowedSet[c] = struct{}{}
+	}
+	if _, ok := allowedSet[keyColumn]; !ok {
+		return "", nil, fmt.Errorf("%w: columna clave %q en la tabla %q", ErrWhitelist, keyColumn, table)
+	}
+	for _, col := range selectColumns {
+		if _, ok := allowedSet[col]; !ok {
+			return "", nil, fmt.Errorf("%w: columna %q en la tabla %q", ErrWhitelist, col, table)
+		}
+	}
+	sql := fmt.Sprintf(
+		"SELECT %s FROM %s WHERE %s = $1 LIMIT 2",
+		joinQuotedIdents(selectColumns), quoteIdent(table), quoteIdent(keyColumn),
+	)
+	return sql, []any{keyColumn}, nil
+}
+
+// lookupExactlyOneRow ejecuta un SELECT (ya compuesto por buildRowLookupSQL)
+// sobre la tx, escanea N columnas arbitrarias con el patrón de scanRows
+// (normalizeSQLValue) y exige EXACTAMENTE una fila. 0 filas (no existe), >1
+// filas (no es 1-a-1) o cualquier error de escaneo ⇒ ErrDeriveRelation (el
+// detalle real queda envuelto para el log). defer rows.Close() garantiza que la
+// conexión de la tx no se filtra en ninguna rama.
+func lookupExactlyOneRow(ctx context.Context, tx txExecer, query string, selectColumns []string, keyValue any) (map[string]any, error) {
+	rows, err := tx.QueryContext(ctx, query, keyValue)
+	if err != nil {
+		return nil, fmt.Errorf("%w: error ejecutando la relectura: %v", ErrDeriveRelation, err)
+	}
+	defer rows.Close()
+
+	all, err := scanRows(rows, selectColumns)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrDeriveRelation, err)
+	}
+	if len(all) != 1 {
+		return nil, fmt.Errorf("%w: se esperaba exactamente una fila, se obtuvieron %d", ErrDeriveRelation, len(all))
+	}
+	return all[0], nil
+}
+
+// resolveFillStrategies resuelve, dentro de la transacción del despacho, las
+// estrategias de llenado de una acción INSERT y devuelve el input FINAL que
+// alimenta execSingleInsert. Fases (design.md §5):
+//
+//  1. capture-from-catalog: toma el id de input[name]; si StoreColumn==IDColumn
+//     el valor es el id; en otro caso (o si alimenta derivaciones) relee la fila
+//     del catálogo UNA vez y la cachea por CaptureKey; INV-5
+//     input[name]=fila[StoreColumn].
+//  2. relectura por CaptureKey (buildRowLookupSQL) exigiendo exactamente 1 fila.
+//  3. derive-from-option: toma Attribute de la fila del catálogo capturado.
+//  4. derive-via-fk: AGRUPA por salto (dedup), un SELECT por salto proyectando la
+//     unión de atributos, exige 1 fila, escribe input[name]=fila[Mapping[0].Attribute];
+//     valor local sin relectura si LocalAttribute == IDColumn de la captura.
+//  5. constantes: ya aplicadas por applyConstantFields.
+//  6. proyección final (INV-2): deja solo claves ∈ columnas(whitelist[TargetTable]).
+//
+// Cualquier referencia sin resolver o fila ≠ 1 ⇒ ErrDeriveRelation.
+func resolveFillStrategies(ctx context.Context, tx txExecer, whitelist map[string][]string, act modules.Action, input map[string]any) (map[string]any, error) {
+	target := act.TargetTable
+
+	// Copia de trabajo (no muta el input recibido).
+	out := make(map[string]any, len(input)+len(act.InputFields))
+	for k, v := range input {
+		out[k] = v
+	}
+
+	// Índice de capturas por CaptureKey (catálogo + id capturado + fila releída).
+	captures := make(map[string]*captureState)
+
+	// --- Fase 1: capture-from-catalog ---
+	for _, f := range act.InputFields {
+		if f.Source != modules.FieldSourceFillStrategy || f.Strategy == nil {
+			continue
+		}
+		s := f.Strategy
+		if s.Kind != modules.StrategyCaptureFromCatalog {
+			continue
+		}
+		if s.Catalog == nil {
+			return nil, fmt.Errorf("%w: la captura %q no declara catálogo", ErrDeriveRelation, f.Name)
+		}
+		idValue, present := out[f.Name]
+		if !present || idValue == nil {
+			return nil, fmt.Errorf("%w: la captura %q no recibió un id", ErrDeriveRelation, f.Name)
+		}
+		storeColumn := s.StoreColumn
+		if storeColumn == "" {
+			storeColumn = s.Catalog.IDColumn
+		}
+		if s.CaptureKey != "" {
+			captures[s.CaptureKey] = &captureState{strategy: s, idValue: idValue}
+		}
+		// Si el valor a escribir es el propio id, no hace falta releer para la
+		// escritura directa; la relectura por derivaciones se hace en la fase 2.
+		if strings.HasPrefix(f.Name, modules.CaptureKeyPrefix) {
+			// Captura que NO escribe a columna: su valor solo alimenta derivaciones.
+			continue
+		}
+		if storeColumn == s.Catalog.IDColumn {
+			out[f.Name] = idValue
+			continue
+		}
+		row, err := reloadCatalogRow(ctx, tx, whitelist, captures, s)
+		if err != nil {
+			return nil, err
+		}
+		out[f.Name] = normalizeSQLValue(row[storeColumn])
+	}
+
+	// --- Fase 3: derive-from-option ---
+	for _, f := range act.InputFields {
+		if f.Source != modules.FieldSourceFillStrategy || f.Strategy == nil {
+			continue
+		}
+		s := f.Strategy
+		if s.Kind != modules.StrategyDeriveFromOption {
+			continue
+		}
+		cap, ok := captures[s.SourceCaptureKey]
+		if !ok {
+			return nil, fmt.Errorf("%w: derive-from-option %q referencia el captureKey %q sin resolver", ErrDeriveRelation, f.Name, s.SourceCaptureKey)
+		}
+		row, err := reloadCatalogRow(ctx, tx, whitelist, captures, cap.strategy)
+		if err != nil {
+			return nil, err
+		}
+		out[f.Name] = normalizeSQLValue(row[s.Attribute])
+	}
+
+	// --- Fase 4: derive-via-fk (con dedup de saltos idénticos) ---
+	type jumpKey struct {
+		relatedTable, relatedColumn, localCaptureKey, localAttribute string
+	}
+	type jumpGroup struct {
+		fields     []modules.FieldSpec
+		attributes []string // unión de Mapping[0].Attribute (dedup)
+	}
+	groups := make(map[jumpKey]*jumpGroup)
+	order := make([]jumpKey, 0)
+	for _, f := range act.InputFields {
+		if f.Source != modules.FieldSourceFillStrategy || f.Strategy == nil {
+			continue
+		}
+		s := f.Strategy
+		if s.Kind != modules.StrategyDeriveViaFK {
+			continue
+		}
+		if s.Jump == nil || len(s.Mapping) != 1 {
+			return nil, fmt.Errorf("%w: derive-via-fk %q tiene un salto/mapeo inválido", ErrDeriveRelation, f.Name)
+		}
+		k := jumpKey{s.Jump.RelatedTable, s.Jump.RelatedColumn, s.Jump.LocalCaptureKey, s.Jump.LocalAttribute}
+		g, ok := groups[k]
+		if !ok {
+			g = &jumpGroup{}
+			groups[k] = g
+			order = append(order, k)
+		}
+		g.fields = append(g.fields, f)
+		attr := s.Mapping[0].Attribute
+		found := false
+		for _, a := range g.attributes {
+			if a == attr {
+				found = true
+				break
+			}
+		}
+		if !found {
+			g.attributes = append(g.attributes, attr)
+		}
+	}
+	for _, k := range order {
+		g := groups[k]
+		// Valor local: sin relectura si LocalAttribute == IDColumn de la captura.
+		cap, ok := captures[k.localCaptureKey]
+		if !ok {
+			return nil, fmt.Errorf("%w: derive-via-fk referencia el captureKey local %q sin resolver", ErrDeriveRelation, k.localCaptureKey)
+		}
+		var localValue any
+		if cap.strategy.Catalog != nil && k.localAttribute == cap.strategy.Catalog.IDColumn {
+			localValue = cap.idValue
+		} else {
+			row, err := reloadCatalogRow(ctx, tx, whitelist, captures, cap.strategy)
+			if err != nil {
+				return nil, err
+			}
+			localValue = normalizeSQLValue(row[k.localAttribute])
+		}
+		// UN SELECT por salto proyectando la unión de atributos del grupo.
+		sort.Strings(g.attributes)
+		query, _, err := buildRowLookupSQL(whitelist, k.relatedTable, k.relatedColumn, g.attributes)
+		if err != nil {
+			return nil, err
+		}
+		row, err := lookupExactlyOneRow(ctx, tx, query, g.attributes, localValue)
+		if err != nil {
+			return nil, err
+		}
+		for _, f := range g.fields {
+			out[f.Name] = normalizeSQLValue(row[f.Strategy.Mapping[0].Attribute])
+		}
+	}
+
+	// --- Fase 6: proyección final (INV-2) ---
+	allowedSet := make(map[string]struct{})
+	for _, c := range whitelistedColumns(whitelist, target) {
+		allowedSet[c] = struct{}{}
+	}
+	for k := range out {
+		if _, ok := allowedSet[k]; !ok {
+			delete(out, k)
+		}
+	}
+	return out, nil
+}
+
+// captureState guarda, por CaptureKey, el estado de una captura
+// capture-from-catalog resuelta durante resolveFillStrategies: su estrategia, el
+// id elegido (input[name]) y la fila releída del catálogo (nil hasta la primera
+// relectura; se cachea para no releer dos veces el mismo catálogo).
+type captureState struct {
+	strategy *modules.FillStrategy
+	idValue  any
+	row      map[string]any
+}
+
+// reloadCatalogRow relee (y cachea en la captura) la fila del catálogo de una
+// captura capture-from-catalog por su id, proyectando TODAS las columnas de la
+// lista blanca de la tabla del catálogo (para que cualquier atributo derivado
+// esté disponible). Exige exactamente una fila (ErrDeriveRelation en otro caso).
+func reloadCatalogRow(ctx context.Context, tx txExecer, whitelist map[string][]string, captures map[string]*captureState, s *modules.FillStrategy) (map[string]any, error) {
+	// Localiza la captura por su estrategia para cachear la fila (evita releer dos
+	// veces el mismo catálogo).
+	var cap *captureState
+	for _, c := range captures {
+		if c.strategy == s {
+			cap = c
+			break
+		}
+	}
+	if cap != nil && cap.row != nil {
+		return cap.row, nil
+	}
+	var idValue any
+	if cap != nil {
+		idValue = cap.idValue
+	}
+	if idValue == nil {
+		return nil, fmt.Errorf("%w: la captura del catálogo %q no tiene id para releer", ErrDeriveRelation, s.Catalog.Table)
+	}
+	cols := whitelistedColumns(whitelist, s.Catalog.Table)
+	query, _, err := buildRowLookupSQL(whitelist, s.Catalog.Table, s.Catalog.IDColumn, cols)
+	if err != nil {
+		return nil, err
+	}
+	row, err := lookupExactlyOneRow(ctx, tx, query, cols, idValue)
+	if err != nil {
+		return nil, err
+	}
+	if cap != nil {
+		cap.row = row
+	}
+	return row, nil
 }
 
 // selectColumns calcula las columnas a traer en el SELECT de la Acción Listar:

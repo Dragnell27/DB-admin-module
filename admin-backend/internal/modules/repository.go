@@ -536,6 +536,201 @@ func validateDefinition(def *Definition) error {
 	if err := validateColumnValueSources(def); err != nil {
 		return err
 	}
+	// Validación de las estrategias de llenado (fail-fast al GUARDAR, §12.A):
+	// camino transaccional, invariante de emisión (columna destino ⇔ FieldSpec),
+	// prefijo reservado __capture_, unicidad/resolución de CaptureKey y whitelist
+	// de catálogos/saltos. Todo rechazo envuelve ErrMultiTableValidation (→ E422).
+	if err := validateFillStrategies(def); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateFillStrategies valida, para cada acción, los campos con
+// Source=="fillStrategy" (y la obligación de camino transaccional de una acción
+// con estrategias). Es la PRIMERA red (el motor es la segunda, §8.1); cada
+// rechazo envuelve ErrMultiTableValidation para que writeDefError lo mapee a
+// E422_VALIDATION. Reglas (design.md §12.A):
+//
+//  1. Camino transaccional: una acción con ≥1 campo fillStrategy exige
+//     TargetTable != "" (el INSERT transaccional corre dentro de la tx del
+//     camino multi-tabla). La condición es TargetTable != "" && HasFillStrategies,
+//     NO IsMultiTable() (desacople, MEDIUM #1).
+//  2. Invariante de emisión: derive-via-fk ⇒ len(Mapping)==1 y
+//     Mapping[0].TargetColumn == Name; derive-from-option / capture que escribe ⇒
+//     Name ∈ whitelist[TargetTable], salvo prefijo __capture_.
+//  3. Ningún Name con prefijo __capture_ coincide con columna de TargetTable.
+//  4. CaptureKey únicos por acción; todo SourceCaptureKey/Jump.LocalCaptureKey
+//     resuelve a un CaptureKey declarado en la misma acción.
+//  5. Whitelist de Catalog.Table/IDColumn/LabelColumn/StoreColumn, Attribute de
+//     derive-from-option, Jump.RelatedTable/RelatedColumn/Mapping[].Attribute; y
+//     Jump.LocalAttribute en whitelist[Catalog.Table de la captura referida por
+//     Jump.LocalCaptureKey] (MEDIUM #3, INV-7).
+func validateFillStrategies(def *Definition) error {
+	whitelist := def.DataSource.PGWhitelist
+	for _, act := range def.Actions {
+		if !HasFillStrategies(act) {
+			continue
+		}
+
+		// Regla 1: camino transaccional.
+		if strings.TrimSpace(act.TargetTable) == "" {
+			return fmt.Errorf("%w: la acción %q usa estrategias de llenado y debe declarar una tabla objetivo (camino transaccional)", ErrMultiTableValidation, act.ActionKey)
+		}
+		target := act.TargetTable
+		targetSet, ok := whitelistSetOf(whitelist, target)
+		if !ok {
+			return fmt.Errorf("%w: la tabla objetivo %q de la acción %q no tiene entrada en la lista blanca", ErrMultiTableValidation, target, act.ActionKey)
+		}
+
+		// Recopila las capturas (CaptureKey ⇒ catálogo) para resolver referencias
+		// y la whitelist del LocalAttribute de los saltos (regla 4 y 5).
+		captureCatalog := make(map[string]*DynamicSource)
+		for _, f := range act.InputFields {
+			if f.Source != FieldSourceFillStrategy || f.Strategy == nil {
+				continue
+			}
+			s := f.Strategy
+			if s.Kind != StrategyCaptureFromCatalog {
+				continue
+			}
+			// Regla 4: CaptureKey único.
+			if s.CaptureKey != "" {
+				if _, dup := captureCatalog[s.CaptureKey]; dup {
+					return fmt.Errorf("%w: la acción %q declara el captureKey %q más de una vez", ErrMultiTableValidation, act.ActionKey, s.CaptureKey)
+				}
+			}
+			captureCatalog[s.CaptureKey] = s.Catalog
+		}
+
+		for _, f := range act.InputFields {
+			if f.Source != FieldSourceFillStrategy {
+				continue
+			}
+			if f.Strategy == nil {
+				return fmt.Errorf("%w: el campo %q de la acción %q usa fillStrategy pero no declara estrategia", ErrMultiTableValidation, f.Name, act.ActionKey)
+			}
+			s := f.Strategy
+			isCapture := strings.HasPrefix(f.Name, CaptureKeyPrefix)
+
+			// Regla 3: ningún __capture_ coincide con columna de la tabla objetivo.
+			if isCapture {
+				if _, isCol := targetSet[f.Name]; isCol {
+					return fmt.Errorf("%w: el campo capturado %q de la acción %q colisiona con una columna de la tabla objetivo %q", ErrMultiTableValidation, f.Name, act.ActionKey, target)
+				}
+			}
+
+			switch s.Kind {
+			case StrategyCaptureFromCatalog:
+				// Regla 2: una captura que ESCRIBE (name no __capture_) debe ser
+				// columna de la tabla objetivo.
+				if !isCapture {
+					if _, isCol := targetSet[f.Name]; !isCol {
+						return fmt.Errorf("%w: el campo %q (capture-from-catalog) de la acción %q no está en la lista blanca de la tabla objetivo %q", ErrMultiTableValidation, f.Name, act.ActionKey, target)
+					}
+				}
+				// Regla 5: whitelist del catálogo (tabla/id/label/storeColumn).
+				if err := validateStrategyCatalog(whitelist, act.ActionKey, f.Name, s); err != nil {
+					return err
+				}
+			case StrategyDeriveFromOption:
+				// Regla 2: escribe a columna; name debe ser columna de la tabla objetivo.
+				if _, isCol := targetSet[f.Name]; !isCol {
+					return fmt.Errorf("%w: el campo %q (derive-from-option) de la acción %q no está en la lista blanca de la tabla objetivo %q", ErrMultiTableValidation, f.Name, act.ActionKey, target)
+				}
+				// Regla 4: SourceCaptureKey resuelve a una captura declarada.
+				cat, ok := captureCatalog[s.SourceCaptureKey]
+				if !ok {
+					return fmt.Errorf("%w: el campo %q (derive-from-option) de la acción %q referencia el captureKey %q sin declarar", ErrMultiTableValidation, f.Name, act.ActionKey, s.SourceCaptureKey)
+				}
+				// Regla 5: Attribute en la whitelist del catálogo capturado.
+				if err := validateAttributeInCatalog(whitelist, act.ActionKey, f.Name, cat, s.Attribute); err != nil {
+					return err
+				}
+			case StrategyDeriveViaFK:
+				// Regla 2: len(Mapping)==1 y Mapping[0].TargetColumn == Name.
+				if len(s.Mapping) != 1 {
+					return fmt.Errorf("%w: el campo %q (derive-via-fk) de la acción %q debe declarar exactamente un mapeo atributo→columna", ErrMultiTableValidation, f.Name, act.ActionKey)
+				}
+				if s.Mapping[0].TargetColumn != f.Name {
+					return fmt.Errorf("%w: el campo %q (derive-via-fk) de la acción %q debe mapear a su propia columna (targetColumn == name)", ErrMultiTableValidation, f.Name, act.ActionKey)
+				}
+				if _, isCol := targetSet[f.Name]; !isCol {
+					return fmt.Errorf("%w: el campo %q (derive-via-fk) de la acción %q no está en la lista blanca de la tabla objetivo %q", ErrMultiTableValidation, f.Name, act.ActionKey, target)
+				}
+				if s.Jump == nil {
+					return fmt.Errorf("%w: el campo %q (derive-via-fk) de la acción %q no declara el salto", ErrMultiTableValidation, f.Name, act.ActionKey)
+				}
+				// Regla 4: Jump.LocalCaptureKey resuelve a una captura declarada.
+				localCat, ok := captureCatalog[s.Jump.LocalCaptureKey]
+				if !ok {
+					return fmt.Errorf("%w: el campo %q (derive-via-fk) de la acción %q referencia el captureKey local %q sin declarar", ErrMultiTableValidation, f.Name, act.ActionKey, s.Jump.LocalCaptureKey)
+				}
+				// Regla 5: whitelist de RelatedTable/RelatedColumn/Mapping.Attribute.
+				relSet, ok := whitelistSetOf(whitelist, s.Jump.RelatedTable)
+				if !ok {
+					return fmt.Errorf("%w: la tabla relacionada %q del campo %q (acción %q) no tiene entrada en la lista blanca", ErrMultiTableValidation, s.Jump.RelatedTable, f.Name, act.ActionKey)
+				}
+				for _, col := range []string{s.Jump.RelatedColumn, s.Mapping[0].Attribute} {
+					if _, ok := relSet[col]; !ok {
+						return fmt.Errorf("%w: la columna %q.%q del salto del campo %q (acción %q) no está en la lista blanca", ErrMultiTableValidation, s.Jump.RelatedTable, col, f.Name, act.ActionKey)
+					}
+				}
+				// Regla 5 (INV-7): Jump.LocalAttribute en la whitelist del catálogo
+				// de la captura local referida.
+				if err := validateAttributeInCatalog(whitelist, act.ActionKey, f.Name, localCat, s.Jump.LocalAttribute); err != nil {
+					return err
+				}
+			case StrategyConstant, StrategyAutogenerated:
+				// Sin referencias ni columnas de catálogo que validar aquí.
+			default:
+				return fmt.Errorf("%w: el campo %q de la acción %q declara una estrategia de llenado desconocida %q", ErrMultiTableValidation, f.Name, act.ActionKey, s.Kind)
+			}
+		}
+	}
+	return nil
+}
+
+// validateStrategyCatalog valida que el catálogo de una captura (tabla, id,
+// etiqueta y storeColumn si se declara) esté en la lista blanca del módulo.
+func validateStrategyCatalog(whitelist map[string][]string, actionKey, fieldName string, s *FillStrategy) error {
+	if s.Catalog == nil {
+		return fmt.Errorf("%w: el campo %q (capture-from-catalog) de la acción %q no declara catálogo", ErrMultiTableValidation, fieldName, actionKey)
+	}
+	cat := s.Catalog
+	set, ok := whitelistSetOf(whitelist, cat.Table)
+	if !ok {
+		return fmt.Errorf("%w: la tabla de catálogo %q del campo %q (acción %q) no tiene entrada en la lista blanca", ErrMultiTableValidation, cat.Table, fieldName, actionKey)
+	}
+	if cat.IDColumn == "" || cat.LabelColumn == "" {
+		return fmt.Errorf("%w: el catálogo del campo %q (acción %q) debe declarar columna de id y de etiqueta", ErrMultiTableValidation, fieldName, actionKey)
+	}
+	cols := []string{cat.IDColumn, cat.LabelColumn}
+	if s.StoreColumn != "" {
+		cols = append(cols, s.StoreColumn)
+	}
+	for _, col := range cols {
+		if _, ok := set[col]; !ok {
+			return fmt.Errorf("%w: la columna %q.%q del catálogo del campo %q (acción %q) no está en la lista blanca", ErrMultiTableValidation, cat.Table, col, fieldName, actionKey)
+		}
+	}
+	return nil
+}
+
+// validateAttributeInCatalog valida que un atributo (de derive-from-option o el
+// LocalAttribute de un salto) esté en la whitelist de la tabla del catálogo
+// referido por la captura.
+func validateAttributeInCatalog(whitelist map[string][]string, actionKey, fieldName string, cat *DynamicSource, attribute string) error {
+	if cat == nil {
+		return fmt.Errorf("%w: el campo %q de la acción %q referencia una captura sin catálogo", ErrMultiTableValidation, fieldName, actionKey)
+	}
+	set, ok := whitelistSetOf(whitelist, cat.Table)
+	if !ok {
+		return fmt.Errorf("%w: la tabla de catálogo %q referida por el campo %q (acción %q) no tiene entrada en la lista blanca", ErrMultiTableValidation, cat.Table, fieldName, actionKey)
+	}
+	if _, ok := set[attribute]; !ok {
+		return fmt.Errorf("%w: el atributo %q.%q referido por el campo %q (acción %q) no está en la lista blanca", ErrMultiTableValidation, cat.Table, attribute, fieldName, actionKey)
+	}
 	return nil
 }
 
@@ -797,6 +992,15 @@ func validateMultiTable(def *Definition) error {
 			}
 			for _, f := range act.InputFields {
 				if f.Source == FieldSourceRow {
+					continue
+				}
+				// Las capturas que NO escriben a columna (prefijo reservado
+				// __capture_) NO son columnas de la tabla objetivo: su valor solo
+				// alimenta derivaciones y la proyección final del motor las descarta
+				// antes del INSERT. Se eximen de la comprobación "name ∈
+				// whitelist[target]"/"name es columna"; su whitelist de catálogo la
+				// valida validateFillStrategies.
+				if strings.HasPrefix(f.Name, CaptureKeyPrefix) {
 					continue
 				}
 				if _, ok := set[f.Name]; !ok {
