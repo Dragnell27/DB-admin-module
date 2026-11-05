@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 
-// Prueba de componente de `ModuleView`: cuando la definición del módulo NO se
-// puede cargar (defError/!def, p. ej. 403 por permisos obsoletos), el estado de
-// error debe seguir mostrando el control "Recargar permisos" junto al banner,
-// porque es precisamente el botón que permite recuperar permisos obsoletos y
-// debe quedar alcanzable desde esa pantalla.
+// Prueba de componente de `ModuleView`: cubre la resolución id→etiqueta de las
+// columnas dinámicas del grid, el camino directo de creación y el listado base
+// vs filtro de acción SELECT. El control de recarga de permisos ya NO vive en
+// este componente (migrado al botón GLOBAL de la barra superior), así que no se
+// afirma su presencia aquí.
 
 import "@testing-library/jest-dom/vitest";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -17,7 +17,6 @@ const useModuleListMock = vi.fn();
 const useModuleActionListMock = vi.fn();
 const useModuleActionMock = vi.fn();
 const useModuleFieldOptionsMock = vi.fn();
-const useRefreshPermissionsMock = vi.fn();
 
 vi.mock("@/features/modules/hooks", () => ({
   useModuleDef: (...args: unknown[]) => useModuleDefMock(...args),
@@ -25,7 +24,6 @@ vi.mock("@/features/modules/hooks", () => ({
   useModuleActionList: (...args: unknown[]) => useModuleActionListMock(...args),
   useModuleAction: (...args: unknown[]) => useModuleActionMock(...args),
   useModuleFieldOptions: (...args: unknown[]) => useModuleFieldOptionsMock(...args),
-  useRefreshPermissions: (...args: unknown[]) => useRefreshPermissionsMock(...args),
 }));
 
 const useModulePermissionsMock = vi.fn(() => [] as unknown[]);
@@ -75,10 +73,6 @@ function setupHooks(overrides?: { defError?: boolean; def?: unknown }) {
     mutate: vi.fn(),
     reset: vi.fn(),
   });
-  useRefreshPermissionsMock.mockReturnValue({
-    isPending: false,
-    mutate: vi.fn(),
-  });
 }
 
 afterEach(() => {
@@ -88,27 +82,21 @@ afterEach(() => {
 });
 
 describe("ModuleView — estado de error de la definición", () => {
-  it("muestra 'Recargar permisos' junto al banner cuando la definición falla (defError)", () => {
+  it("muestra el banner de error cuando la definición falla (defError)", () => {
     setupHooks({ defError: true });
     render(<ModuleView slug="afiliaciones" />);
 
     expect(
       screen.getByText("No se pudo cargar la definición del módulo."),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Recargar permisos" }),
-    ).toBeInTheDocument();
   });
 
-  it("muestra 'Recargar permisos' cuando la definición viene vacía (!def)", () => {
+  it("muestra el banner de error cuando la definición viene vacía (!def)", () => {
     setupHooks({ defError: false, def: undefined });
     render(<ModuleView slug="afiliaciones" />);
 
     expect(
       screen.getByText("No se pudo cargar la definición del módulo."),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Recargar permisos" }),
     ).toBeInTheDocument();
   });
 });

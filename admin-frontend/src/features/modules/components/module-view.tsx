@@ -13,7 +13,7 @@
  * `canModule` (Req. 11.4); la seguridad real la aplica el backend.
  */
 import * as React from "react";
-import { Loader2, Plus, RefreshCw } from "lucide-react";
+import { Loader2, Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -37,7 +37,6 @@ import {
   useModuleDef,
   useModuleFieldOptions,
   useModuleList,
-  useRefreshPermissions,
   type ModuleRow,
 } from "@/features/modules/hooks";
 import type {
@@ -479,43 +478,6 @@ function formatValue(value: unknown, format?: string): React.ReactNode {
   return String(value);
 }
 
-/**
- * Botón "Recargar permisos": reemite el JWT con los permisos actuales. Es
- * SIEMPRE visible (no gated por canModule) y NO es la acción de permiso
- * "Recargar" (que recarga la caché de datos). Se extrae para reutilizar la MISMA
- * marca en la cabecera del camino feliz y en el estado de error (defError/!def),
- * de modo que el usuario siempre pueda recuperar permisos desde esta pantalla.
- */
-function RefreshPermissionsButton({
-  isPending,
-  onClick,
-}: {
-  readonly isPending: boolean;
-  readonly onClick: () => void;
-}) {
-  return (
-    <Button
-      type="button"
-      variant="outline"
-      size="sm"
-      onClick={onClick}
-      disabled={isPending}
-    >
-      {isPending ? (
-        <>
-          <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-          Recargando permisos…
-        </>
-      ) : (
-        <>
-          <RefreshCw className="size-4" aria-hidden="true" />
-          Recargar permisos
-        </>
-      )}
-    </Button>
-  );
-}
-
 /** Estado de carga de las opciones de UN campo dinámico. */
 interface DynamicOptionsEntry {
   readonly options: ReadonlyArray<SelectOption>;
@@ -853,20 +815,6 @@ export function ModuleView({ slug }: ModuleViewProps) {
     activeFilter != null ? actionList : baseList;
 
   const actionMutation = useModuleAction(slug, activeAction?.actionKey ?? "");
-
-  // Reemisión del token con los permisos actuales (botón "Recargar permisos").
-  const refreshPermissions = useRefreshPermissions({
-    onSuccess: () => {
-      toast.success("Permisos actualizados");
-    },
-    onError: (err) => {
-      toast.error(err?.message ?? "No se pudieron recargar los permisos.");
-    },
-  });
-
-  const onRefreshPermissions = React.useCallback(() => {
-    refreshPermissions.mutate();
-  }, [refreshPermissions]);
 
   // Todas las columnas de la definición (para edición/PK) y, aparte, solo las
   // visibles al listar (para la tabla, R3.3/R3.5).
@@ -1488,23 +1436,14 @@ export function ModuleView({ slug }: ModuleViewProps) {
   }
   if (defError || !def) {
     // No se pudo cargar la definición (p. ej. 403 por permisos obsoletos). Aun
-    // así renderizamos el botón "Recargar permisos" junto al banner de error:
-    // es el control que existe precisamente para recuperar permisos obsoletos,
-    // y debe seguir alcanzable desde este estado. Reutiliza el mismo hook/handler
-    // que la cabecera del camino feliz. Tras un refresco con éxito el componente
-    // re-renderiza y, si los permisos ya lo permiten, carga la definición.
+    // Para recuperar permisos obsoletos desde este estado, el usuario dispone
+    // del botón GLOBAL de recarga en la barra superior (reemite el JWT y
+    // refresca el menú); tras un refresco con éxito el componente re-renderiza
+    // y, si los permisos ya lo permiten, carga la definición.
     return (
       <div className="space-y-4">
-        <div className="flex justify-end">
-          <RefreshPermissionsButton
-            isPending={refreshPermissions.isPending}
-            onClick={onRefreshPermissions}
-          />
-        </div>
-
-        {/* El error de "Recargar permisos" se muestra como TOAST flotante. El
-            banner de abajo es la carga fallida de la DEFINICIÓN (contextual al
-            cuerpo de la página): se queda inline, fuera del alcance de esta
+        {/* El banner de abajo es la carga fallida de la DEFINICIÓN (contextual
+            al cuerpo de la página): se queda inline, fuera del alcance de esta
             migración. */}
         <FeedbackBanner
           tone="error"
@@ -1528,14 +1467,6 @@ export function ModuleView({ slug }: ModuleViewProps) {
           <h1 className="text-2xl font-semibold text-foreground">{def.name}</h1>
         </div>
         <div className="flex items-center gap-2">
-          {/* "Recargar permisos": reemite el JWT con los permisos actuales. Es
-              SIEMPRE visible (no gated por canModule) y NO es la acción de
-              permiso "Recargar" (que recarga la caché de datos). */}
-          <RefreshPermissionsButton
-            isPending={refreshPermissions.isPending}
-            onClick={onRefreshPermissions}
-          />
-          <div className="h-6 w-px bg-border" aria-hidden="true" />
           {visibleHeaderActions.map((a) => (
             <Button key={a.actionKey} type="button" onClick={() => launchAction(a, null)}>
               <Plus aria-hidden="true" />

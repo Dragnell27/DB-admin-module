@@ -21,6 +21,7 @@ import { PanelLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { LogoutButton } from "@/components/logout-button";
 import { CountrySelector } from "@/components/country-selector";
+import { RefreshButton } from "@/components/refresh-button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { showsCountrySelector } from "@/lib/ott-routes";
 import { usePageTitleValue } from "@/lib/page-chrome";
@@ -116,6 +117,8 @@ export function AppHeader() {
       <div className="flex items-center gap-4">
         {/* Selector de país: solo en recursos OTT por país. */}
         {showCountry ? <CountrySelector /> : null}
+
+        <RefreshButton />
 
         <ThemeToggle />
 

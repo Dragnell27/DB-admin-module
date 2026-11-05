@@ -22,6 +22,7 @@
  * Todas las llamadas pasan por `apiClient` (hereda `Authorization` y
  * `X-Country`), consistente con que el backend es el único ejecutor (Req. 13.1).
  */
+import * as React from "react";
 import {
   useMutation,
   useQuery,
@@ -457,4 +458,43 @@ export function useRefreshPermissions(
     },
     ...options,
   });
+}
+
+/**
+ * Orquestación del botón GLOBAL de recarga de la topbar.
+ *
+ * Compone, SIN duplicar lógica, la reemisión del token (`useRefreshPermissions`,
+ * que ya persiste el JWT y propaga permisos/rol/modperms vía `subscribeSession`)
+ * con la invalidación de la query del menú lateral (`GET /modules`,
+ * `moduleDefKeys.visible`). El flujo es:
+ *
+ *   1. `refresh()` → reemite + persiste el token (permisos nuevos ya propagados).
+ *   2. SOLO en éxito, `invalidateQueries({ queryKey: moduleDefKeys.visible })`
+ *      para que el sidebar/home vuelvan a pedir la lista de módulos con el token
+ *      nuevo. Esto basta para que un módulo recién creado aparezca SIN recargar
+ *      el navegador y MANTENIENDO la ruta actual (REFETCH SUAVE, opción B).
+ *
+ * Si el refresh falla, propaga el `ApiError` (el call site muestra el toast) y
+ * NO invalida nada. No hay queryKey de permisos/rol que invalidar: esos los lee
+ * el store de sesión, no TanStack Query.
+ *
+ * RESPALDO documentado: si el refetch suave no bastara para reflejar el módulo
+ * nuevo, el fallback sería `window.location.reload()` DESPUÉS del
+ * refresh-permissions (preserva la URL/ruta). La verificación en vivo confirmó
+ * que el refetch suave es suficiente, así que el fallback queda documentado pero
+ * NO activo.
+ */
+export function useGlobalRefresh(): {
+  refresh: () => Promise<void>;
+  isPending: boolean;
+} {
+  const queryClient = useQueryClient();
+  const refreshPermissions = useRefreshPermissions();
+
+  const refresh = React.useCallback(async () => {
+    await refreshPermissions.mutateAsync();
+    await queryClient.invalidateQueries({ queryKey: moduleDefKeys.visible });
+  }, [queryClient, refreshPermissions]);
+
+  return { refresh, isPending: refreshPermissions.isPending };
 }
