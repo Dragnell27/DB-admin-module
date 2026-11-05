@@ -383,6 +383,14 @@ export function fieldLabelsForAction(
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const f of fields) {
+    // MEJORA 3: la etiqueta explícita del campo (f.label) tiene prioridad sobre
+    // la de la DisplayColumn; así un __capture_* (sin columna) o cualquier campo
+    // muestran la etiqueta que el admin configuró en el editor.
+    const explicit = f.label?.trim();
+    if (explicit) {
+      out[f.name] = explicit;
+      continue;
+    }
     const col = columns.find(
       (c) =>
         c.field === f.name &&

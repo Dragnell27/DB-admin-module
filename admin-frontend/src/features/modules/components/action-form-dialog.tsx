@@ -17,6 +17,7 @@ import { AlertCircle, AlertTriangle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchSelect, type SearchSelectOption } from "@/components/ui/search-select";
 import {
   Card,
   CardContent,
@@ -29,23 +30,18 @@ import type { ModuleAction } from "@/features/modules/types";
 import {
   buildInitialValues,
   buildSubmitInput,
+  displayFieldLabel,
   getVisibleFields,
   isCatalogSelectorField,
+  validateCatalogSelection,
   validateRequired,
+  type CatalogSelectorDescriptor,
 } from "@/features/modules/components/action-form-dialog.logic";
 import type { ColumnField } from "@/features/modules/components/action-form-dialog.logic";
 
 // Reexporta el tipo (fuente única en el módulo de lógica pura) para no romper a
 // los consumidores que lo importan desde el componente.
 export type { ColumnField } from "@/features/modules/components/action-form-dialog.logic";
-
-/**
- * Clases Tailwind del desplegable de un campo "select" en tiempo de ejecución.
- * Son las MISMAS que el `inputClass` compartido del asistente (module-wizard),
- * pero se declaran aquí localmente para NO acoplar el diálogo al wizard.
- */
-const selectClass =
-  "h-10 w-full rounded-md border border-input-border bg-[var(--input-surface,var(--input))] px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 export interface ActionFormDialogProps {
   readonly open: boolean;
@@ -131,6 +127,25 @@ export function ActionFormDialog({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [open, isPending, onCancel]);
 
+  // Descriptores de los campos SELECTOR de catálogo de AMBAS ramas, para validar
+  // al confirmar que el valor elegido es una opción REAL (MEJORA 2). Se usan sus
+  // etiquetas legibles para nombrar el campo en el mensaje de error. Se calcula
+  // ANTES del early return para no romper el orden de hooks.
+  const catalogSelectors = React.useMemo<CatalogSelectorDescriptor[]>(() => {
+    if (columnMode) {
+      return (columnFields ?? [])
+        .filter((cf) => !cf.readOnly && cf.options != null)
+        .map((cf) => ({ key: cf.field, label: cf.label, options: cf.options ?? [] }));
+    }
+    return visibleFields
+      .filter((f) => isCatalogSelectorField(f))
+      .map((f) => ({
+        key: f.name,
+        label: displayFieldLabel(f, fieldLabels[f.name]),
+        options: f.options ?? [],
+      }));
+  }, [columnMode, columnFields, visibleFields, fieldLabels]);
+
   if (!open) {
     return null;
   }
@@ -148,8 +163,12 @@ export function ActionFormDialog({
       visibleFields,
       values,
     });
-    if (Object.keys(nextErrors).length > 0) {
-      setErrors(nextErrors);
+    // MEJORA 2: al confirmar, exige que cada selector de catálogo con valor sea
+    // una OPCIÓN REAL; si no, error inline anclado que nombra el campo. No envía.
+    const selectorErrors = validateCatalogSelection(catalogSelectors, values);
+    const merged = { ...nextErrors, ...selectorErrors };
+    if (Object.keys(merged).length > 0) {
+      setErrors(merged);
       return;
     }
     onSubmit(buildSubmitInput({ columnMode, columnFields, visibleFields, values }));
@@ -223,30 +242,28 @@ export function ActionFormDialog({
                       ) : null}
                     </Label>
                     {cf.options ? (
-                      // Origen lista (estática o dinámica): desplegable con las
-                      // opciones. En dinámico el padre inyecta las opciones
+                      // Origen lista (estática o dinámica): combobox con BUSCADOR
+                      // (SearchSelect). En dinámico el padre inyecta las opciones
                       // cargadas y, vía optionsLoading/optionsError, el estado de
-                      // carga (deshabilita + "Cargando…") o de fallo (texto).
+                      // carga o de fallo. Permite escribir libre; la validez de la
+                      // opción se comprueba al Confirmar.
                       <>
-                        <select
+                        <SearchSelect
                           id={`field_${cf.field}`}
-                          className={selectClass}
                           value={String(values[cf.field] ?? "")}
-                          disabled={cf.readOnly || cf.optionsLoading}
-                          onChange={(e) =>
-                            setValues((prev) => ({ ...prev, [cf.field]: e.target.value }))
-                          }
+                          options={cf.options.map(
+                            (opt): SearchSelectOption => ({ value: opt.value, label: opt.label }),
+                          )}
+                          disabled={cf.readOnly}
+                          loading={cf.optionsLoading}
+                          allowCustomValue
+                          placeholder="Escribe para buscar…"
+                          emptyText="Sin coincidencias"
                           aria-invalid={errors[cf.field] ? "true" : undefined}
-                        >
-                          <option value="" disabled={cf.required}>
-                            {cf.optionsLoading ? "Cargando…" : "— Selecciona —"}
-                          </option>
-                          {cf.options.map((opt) => (
-                            <option key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </option>
-                          ))}
-                        </select>
+                          onChange={(v) =>
+                            setValues((prev) => ({ ...prev, [cf.field]: v }))
+                          }
+                        />
                         {cf.optionsError ? (
                           <p className="text-xs text-destructive-text">
                             No se pudieron cargar las opciones
@@ -282,29 +299,28 @@ export function ActionFormDialog({
               visibleFields.map((f) => (
                 <div key={f.name} className="space-y-1.5">
                   <Label htmlFor={`field_${f.name}`}>
-                    {fieldLabels[f.name] ?? f.name}
+                    {displayFieldLabel(f, fieldLabels[f.name])}
                     {f.required ? <span className="text-destructive-text"> *</span> : null}
                   </Label>
                   {isCatalogSelectorField(f) ? (
-                    <select
+                    // Combobox con BUSCADOR (SearchSelect): filtra por etiqueta,
+                    // permite escribir libre y, al Confirmar, se valida que el
+                    // valor sea una opción real. Envía el value/id, no la etiqueta.
+                    <SearchSelect
                       id={`field_${f.name}`}
-                      className={selectClass}
                       value={String(values[f.name] ?? "")}
-                      disabled={f.optionsLoading}
-                      onChange={(e) =>
-                        setValues((prev) => ({ ...prev, [f.name]: e.target.value }))
-                      }
+                      options={(f.options ?? []).map(
+                        (opt): SearchSelectOption => ({ value: opt.value, label: opt.label }),
+                      )}
+                      loading={f.optionsLoading}
+                      allowCustomValue
+                      placeholder="Escribe para buscar…"
+                      emptyText="Sin coincidencias"
                       aria-invalid={errors[f.name] ? "true" : undefined}
-                    >
-                      <option value="" disabled={f.required}>
-                        {f.optionsLoading ? "Cargando…" : "— Selecciona —"}
-                      </option>
-                      {(f.options ?? []).map((opt) => (
-                        <option key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(v) =>
+                        setValues((prev) => ({ ...prev, [f.name]: v }))
+                      }
+                    />
                   ) : null}
                   {isCatalogSelectorField(f) && f.optionsError ? (
                     <p className="text-xs text-destructive-text">

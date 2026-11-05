@@ -101,31 +101,51 @@ function UniquenessColumnsInput({
   readonly onColumnsChange: (columns: string[]) => void;
 }) {
   const [text, setText] = React.useState(columns.join(", "));
+  // Última lista que ESTE componente emitió por onColumnsChange a raíz del
+  // tecleo. El <input> es la ÚNICA fuente de verdad del texto en curso; esta
+  // guarda distingue los cambios de `columns` originados por el propio tecleo
+  // (NO se resincroniza el texto: lo pisaría a media palabra) de los EXTERNOS
+  // (hidratación / remonte de la sección al cambiar la plantilla de conexión:
+  // SÍ se resincroniza). Se siembra con el valor inicial para que el primer
+  // render no dispare un resync espurio.
+  const lastEmittedRef = React.useRef<string[]>(columns);
 
   // Parsea el texto crudo a array y lo propaga al estado del asistente. Solo
-  // reacciona a lo que el usuario teclea (text), no al array de vuelta.
+  // reacciona a lo que el usuario teclea (text), no al array de vuelta. Antes de
+  // propagar, registra el array emitido en lastEmittedRef para que el efecto de
+  // resync distinga este cambio (propio) de uno externo.
   React.useEffect(() => {
     const parsed = parseColumnList(text);
     const changed =
       parsed.length !== columns.length ||
       parsed.some((c, i) => c !== columns[i]);
     if (changed) {
+      lastEmittedRef.current = parsed;
       onColumnsChange(parsed);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text]);
 
-  // Resincroniza el texto cuando `columns` cambia por fuera (remonte de sección
-  // al navegar entre pestañas, hidratación, etc.). Bug #2: al cambiar la
-  // plantilla de conexión la sección "Acciones" se desmonta/remonta y el texto
-  // local quedaba desacoplado del estado (que SÍ conserva las columnas en el
-  // reducer). Guarda anti-bucle: solo escribe `text` (estado local) y SOLO si su
-  // parseo difiere de `columns`, de modo que NUNCA llama onColumnsChange ni pisa
-  // lo que el usuario está tecleando (coexiste con el efecto `[text]` de arriba).
+  // Resincroniza el texto SOLO cuando `columns` cambia por fuera (remonte de
+  // sección al navegar entre pestañas, hidratación, cambio de plantilla de
+  // conexión). Bug #2: al cambiar la plantilla la sección "Acciones" se
+  // desmonta/remonta y el texto local quedaba desacoplado del estado (que SÍ
+  // conserva las columnas en el reducer) ⇒ hay que reseed el texto.
+  //
+  // CRÍTICO (Bug corrupción de texto): si el cambio de `columns` proviene del
+  // PROPIO tecleo (coincide con lastEmittedRef), NO se reescribe `text`: hacerlo
+  // creaba una carrera bidireccional text↔columns que normalizaba el espaciado a
+  // media palabra y comía caracteres. Solo se reseed cuando `columns` difiere de
+  // lo último que emitimos (cambio externo real).
   React.useEffect(() => {
-    if (parseColumnList(text).join("\u0000") !== columns.join("\u0000")) {
+    const key = columns.join("\u0000");
+    if (key === lastEmittedRef.current.join("\u0000")) {
+      return; // cambio originado por el tecleo: el <input> manda, no se pisa.
+    }
+    if (parseColumnList(text).join("\u0000") !== key) {
       setText(columns.join(", "));
     }
+    lastEmittedRef.current = columns;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [columns.join("\u0000")]);
 
@@ -1967,6 +1987,8 @@ export function ActionsSection({ state, patch }: SectionProps) {
           dynamicSource: { table: "", idColumn: "", labelColumn: "", order: { column: "", direction: "asc" } },
           dynamicFilters: [],
           hidden: false,
+          label: "",
+          captureOnly: false,
           strategy: emptyStrategyFormState(),
           // uid EFÍMERO de runtime: sobrevive al spread de updateField, de modo
           // que elegir la columna (name:"" -> "x") NO remonta ni colapsa la fila.
@@ -2240,6 +2262,10 @@ function ActionFieldRow({
   const [touched, setTouched] = React.useState(false);
   const colObjInvalid = fieldTargetColumnError(f) !== null && touched;
   const colObjErrorId = `${panelId}_colobj_error`;
+  // MEJORA 4: un campo auxiliar de SOLO CAPTURA no escribe columna de la tabla
+  // objetivo; su `name` es la clave de captura. En ese modo NO se muestra el
+  // selector de "Columna objetivo" ni su validación.
+  const captureOnly = Boolean(f.captureOnly);
 
   return (
     <CollapsibleRow
@@ -2260,6 +2286,21 @@ function ActionFieldRow({
     >
                   <div className="grid items-end gap-2 sm:grid-cols-[1fr_1fr_auto]">
                     <div className="space-y-1">
+                      {captureOnly ? (
+                        // Campo solo-captura: no hay columna objetivo; el `name` es
+                        // la clave de captura que alimenta las derivaciones.
+                        <>
+                          <Label htmlFor={`${panelId}_capkey`}>Clave de captura (name)</Label>
+                          <Input
+                            id={`${panelId}_capkey`}
+                            className={inputClass}
+                            value={f.name}
+                            placeholder="p. ej. __capture_comercio"
+                            onChange={(e) => onUpdateField({ name: e.target.value })}
+                          />
+                        </>
+                      ) : (
+                        <>
                       <Label>Columna objetivo</Label>
                       {isWriteColumnAction(a) ? (
                         // Acción de escritura: el campo ES una columna editable no-PK
@@ -2316,6 +2357,8 @@ function ActionFieldRow({
                           Falta la columna objetivo
                         </p>
                       ) : null}
+                        </>
+                      )}
                     </div>
                     <div className="space-y-1">
                       <Label>Tipo</Label>
@@ -2329,6 +2372,30 @@ function ActionFieldRow({
                     <label className="flex items-center gap-1 pb-2 text-xs">
                       <input type="checkbox" checked={f.required} onChange={(e) => onUpdateField({ required: e.target.checked })} className="size-4" />
                       Oblig.
+                    </label>
+                  </div>
+
+                  {/* MEJORA 3 + 4: etiqueta visible del formulario de ejecución y
+                      marca de campo auxiliar de solo captura (no escribe columna). */}
+                  <div className="grid items-start gap-2 sm:grid-cols-2">
+                    <div className="space-y-1">
+                      <Label htmlFor={`${panelId}_label`}>Etiqueta a mostrar (opcional)</Label>
+                      <Input
+                        id={`${panelId}_label`}
+                        className={inputClass}
+                        value={f.label}
+                        placeholder="Etiqueta legible en el formulario"
+                        onChange={(e) => onUpdateField({ label: e.target.value })}
+                      />
+                    </div>
+                    <label className="flex items-start gap-2 pt-6 text-xs">
+                      <input
+                        type="checkbox"
+                        checked={captureOnly}
+                        onChange={(e) => onUpdateField({ captureOnly: e.target.checked })}
+                        className="mt-0.5 size-4"
+                      />
+                      <span>Campo auxiliar: solo captura (no escribe a columna)</span>
                     </label>
                   </div>
 

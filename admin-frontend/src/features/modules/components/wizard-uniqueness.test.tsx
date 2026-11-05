@@ -130,3 +130,59 @@ describe("Bug #2 — cambiar la plantilla no resetea uniqueness.columns", () => 
     expect(createAction.uniqueness.columns).toEqual(UNIQ_COLUMNS);
   });
 });
+
+/**
+ * Estado de edición multi-tabla con la unicidad VACÍA, para teclear desde cero
+ * en el input de unicidad y reproducir el bug de corrupción de texto.
+ */
+function multiTableCreateStateEmptyUniqueness(): WizardState {
+  const s = multiTableCreateState();
+  const create = s.actions.find((a) => a.kind === "create");
+  if (create) {
+    create.uniqueness = emptyUniquenessFormState();
+  }
+  return s;
+}
+
+describe("Corrupción de texto — tecleo carácter por carácter en unicidad", () => {
+  it("el input muestra EXACTAMENTE lo tecleado y el estado parsea las 3 columnas", () => {
+    render(
+      <ModuleWizard
+        initial={multiTableCreateStateEmptyUniqueness()}
+        editSlug="qa-medios-pago-x-comercio"
+      />,
+    );
+
+    const nav = screen.getByRole("navigation", { name: "Secciones del asistente" });
+    fireEvent.click(within(nav).getByRole("button", { name: /Acciones/ }));
+
+    const input = screen.getByPlaceholderText(
+      "p. ej. padr_numero, depe_numero",
+    ) as HTMLInputElement;
+    expect(input.value).toBe("");
+
+    // Teclea carácter por carácter acumulando el valor (simula pulsaciones).
+    const target = "padr_numero, depe_numero, valor_lista";
+    let acc = "";
+    for (const ch of target) {
+      acc += ch;
+      fireEvent.change(input, { target: { value: acc } });
+    }
+
+    // (i) El input muestra EXACTAMENTE lo tecleado, sin caracteres comidos.
+    expect(input.value).toBe(target);
+
+    // (ii) El estado (fuente de verdad) parsea exactamente las 3 columnas.
+    fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    expect(updateMutate).toHaveBeenCalledTimes(1);
+    const payload = updateMutate.mock.calls[0][0];
+    const createAction = payload.actions.find(
+      (a: { kind: string }) => a.kind === "create",
+    );
+    expect(createAction.uniqueness.columns).toEqual([
+      "padr_numero",
+      "depe_numero",
+      "valor_lista",
+    ]);
+  });
+});

@@ -20,6 +20,38 @@ import type {
 } from "@/features/modules/types";
 
 /**
+ * Prefijo reservado del `name` de una captura que NO escribe columna (espejo de
+ * modules.CaptureKeyPrefix del backend). El formulario de ejecución lo retira al
+ * derivar la etiqueta de un campo sin `label` propio.
+ */
+export const CAPTURE_KEY_PREFIX = "__capture_";
+
+/**
+ * Etiqueta legible de un campo en el formulario de EJECUCIÓN (MEJORA 3). Regla
+ * única (sin duplicar el fallback por sitios):
+ *   1. `field.label` si tiene contenido (lo define el admin en el editor);
+ *   2. la etiqueta de la DisplayColumn emparejada, si se provee (`columnLabel`);
+ *   3. el `name` SIN el prefijo reservado `__capture_` (caso de las capturas, que
+ *      NO tienen DisplayColumn).
+ * Función pura.
+ */
+export function displayFieldLabel(
+  field: Pick<FieldSpec, "name" | "label">,
+  columnLabel?: string,
+): string {
+  const label = field.label?.trim();
+  if (label) {
+    return label;
+  }
+  if (columnLabel != null && columnLabel.trim() !== "") {
+    return columnLabel;
+  }
+  return field.name.startsWith(CAPTURE_KEY_PREFIX)
+    ? field.name.slice(CAPTURE_KEY_PREFIX.length)
+    : field.name;
+}
+
+/**
  * Campo de un formulario GENERADO DESDE COLUMNAS (acciones de editar, Opción B).
  * Cuando `ActionFormDialog` recibe `columnFields`, construye el formulario a
  * partir de estas entradas en vez de `action.inputFields`. Un campo `readOnly`
@@ -280,4 +312,44 @@ export function buildSubmitInput({
     }
   }
   return input;
+}
+
+/**
+ * Descriptor de un campo SELECTOR de catálogo para validar que el valor elegido
+ * sea una OPCIÓN REAL (MEJORA 2). `key` es la clave del campo en `values`
+ * (f.name o cf.field); `label` la etiqueta legible para el mensaje; `options` el
+ * catálogo contra el que se valida el value.
+ */
+export interface CatalogSelectorDescriptor {
+  readonly key: string;
+  readonly label: string;
+  readonly options: ReadonlyArray<SelectOption>;
+}
+
+/**
+ * Valida que, para cada campo selector de catálogo, el valor presente en
+ * `values` corresponda a una OPCIÓN REAL (opt.value). Permite valor libre al
+ * teclear, pero al CONFIRMAR exige que coincida con una opción: si no, produce un
+ * error anclado al campo que lo NOMBRA
+ * («<etiqueta>: selecciona una opción válida de la lista»). Un valor VACÍO NO se
+ * considera inválido aquí (la obligatoriedad la cubre `validateRequired`).
+ * Devuelve un mapa clave→mensaje (vacío ⇒ sin errores). Función pura.
+ */
+export function validateCatalogSelection(
+  selectors: ReadonlyArray<CatalogSelectorDescriptor>,
+  values: Record<string, string | boolean>,
+): Record<string, string> {
+  const errors: Record<string, string> = {};
+  for (const sel of selectors) {
+    const raw = values[sel.key];
+    const value = typeof raw === "string" ? raw.trim() : "";
+    if (value === "") {
+      continue; // vacío ⇒ lo gestiona la validación de obligatoriedad.
+    }
+    const match = sel.options.some((opt) => opt.value === value);
+    if (!match) {
+      errors[sel.key] = `${sel.label}: selecciona una opción válida de la lista`;
+    }
+  }
+  return errors;
 }
