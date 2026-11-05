@@ -13,9 +13,9 @@
   que su superficie contenedora y sube un paso dentro de diálogos/popover
   (`--input-elevated`) vía la variable en cascada `--input-surface`. Los nombres
   de tokens shadcn se conservan; se añaden auxiliares no-shadcn (`--input-elevated`,
-  `--input-hover`, `--border-soft`, `--ok-text`, `--warn-text`, `--destructive-text`)
-  y la separación superficie/texto del rojo. Los hex son los medidos para AA en
-  el diseño aprobado (ver `.agents/tasks/theme-light-dark/design.md`, Decisión 1/5).
+  `--border-soft`, `--ok-text`, `--warn-text`, `--destructive-text`, `--tab-active-bg`,
+  `--pill-principal-text`) y la separación superficie/texto del rojo. Los hex son
+  los medidos para AA en el diseño aprobado (paleta "Clean Neutral" / "Deep Slate").
   Tokens mapeados a Tailwind v4 vía @theme inline.
 */
 
@@ -23,15 +23,15 @@
   /* radio base 8px (Req. 1.2: inputs con radio de 8 píxeles) */
   --radius: 0.5rem;
 
-  /* Paleta CLARA. */
-  --background: #f6f8fb;
-  --foreground: #0b0f1e;
+  /* Paleta CLARA ("Clean Neutral & Soft Zinc"). */
+  --background: #f8fafc; /* gris muy suave, descansa la vista */
+  --foreground: #1e293b; /* gris oscuro elegante, nunca #000 (13.98:1 sobre bg) */
 
-  --card: #ffffff;
-  --card-foreground: #0b0f1e;
+  --card: #ffffff; /* se eleva por sombra sutil, no por borde duro */
+  --card-foreground: #1e293b;
 
   --popover: #ffffff;
-  --popover-foreground: #0b0f1e;
+  --popover-foreground: #1e293b;
 
   /* Botón primario del design system en CLARO: superficie oscura con texto
      claro (inverso del fondo). El azul NO es color de botón, es acento (links,
@@ -47,10 +47,10 @@
   --secondary-active: #d7e0ee;
 
   --muted: #eef2f8;
-  --muted-foreground: #54607a; /* AA sobre #ffffff (6.30:1) y #f6f8fb (5.93:1) */
+  --muted-foreground: #64748b; /* subtítulos; AA sobre #ffffff (4.76:1) y #f8fafc (4.55:1) */
 
   --accent: #eef2f8; /* superficie de hover/activo (claro) */
-  --accent-foreground: #0b0f1e;
+  --accent-foreground: #1e293b; /* texto sobre accent (nunca #000) */
   --accent-hover: #e3e9f3; /* hover de ghost/outline (más visible que accent) */
 
   --destructive: #dc2626; /* FONDO de botón; texto blanco 4.83:1 (AA) */
@@ -59,22 +59,27 @@
   --destructive-active: #a91b1b;
   --destructive-text: #dc2626; /* TEXTO rojo sobre blanco: 4.83:1 (en claro coinciden) */
 
-  --border: #7e8ca3; /* borde de control VISIBLE: 3.41:1 sobre blanco, 3.20:1 sobre bg */
-  --border-soft: #e4e9f1; /* borde decorativo interno (sin requisito 3:1) */
+  /* Borde de CONTROL (requiere 3:1): #7e8ca3 = 3.25:1 sobre bg #f8fafc,
+     3.41:1 sobre blanco. El hex suave pedido (#cbd5e1 = 1.42:1) NO llega a 3:1,
+     así que el borde de control conserva AA (restricción #8) y el hex suave se
+     aplica al borde DECORATIVO de card (--border-soft). */
+  --border: #7e8ca3;
+  --border-soft: #e9eef5; /* borde decorativo de card (sin requisito 3:1): evita doble borde */
 
   /* Superficies suaves de los pills de resumen (FEAT-001). */
   --pill-principal-bg: #eef4fe; /* azul muy tenue para el pill «Principal» */
-  --pill-pk-bg: #f1ebfe; /* púrpura muy tenue para el pill «PK» */
+  --pill-principal-text: #2563eb; /* texto del pill principal: AA 4.68:1 sobre #eef4fe (el ring #3b82f6 daba 3.33:1) */
+  --pill-pk-bg: #f1ebfe; /* púrpura muy tenue para el pill «PK» (chart-3 #7c3aed = 4.90:1 AA) */
 
-  --input: #ffffff;
-  --input-elevated: #ffffff; /* en claro el input ya es blanco; el borde distingue en diálogo */
-  --input-hover: #f3f6fb;
+  --input: #f1f5f9; /* campo interactivo: zinc suave, se distingue de la card blanca */
+  --input-elevated: #f1f5f9; /* en claro NO hay escalón; el borde distingue el input en diálogo */
   --input-surface: var(--input); /* cascada; la reasigna el contenedor elevado */
-  /* Borde del INPUT, más marcado que --border para que el campo blanco se lea
-     sobre la tarjeta blanca en claro. #6b7a93 = 4.0:1 sobre blanco (AA). */
+  /* Borde del INPUT visible en CLARO (restricción #4). #6b7a93 = 3.97:1 sobre
+     input #f1f5f9 y 4.35:1 sobre card #fff (AA). El hex suave pedido (#cbd5e1 =
+     1.36:1) NO llega a 3:1, así que el borde de control conserva AA. */
   --input-border: #6b7a93;
 
-  --ring: #2563eb; /* azul identitario, foco visible (5.17:1 sobre blanco) */
+  --ring: #3b82f6; /* azul SOLO como acento de foco/links (3.68:1 sobre blanco) */
 
   /* Texto semántico en claro (los tintes vívidos no llegan a 4.5:1 como texto). */
   --ok-text: #047857; /* verde oscuro para TEXTO de éxito (5.48:1 sobre blanco) */
@@ -92,12 +97,12 @@
   --sidebar-border: #cbd4e1;
   --sidebar-ring: #2563eb;
 
-  /* Charts / colores semánticos (claro). */
-  --chart-1: #2563eb; /* azul */
-  --chart-2: #0891b2;
-  --chart-3: #7c3aed; /* pk — Switch tone="accent" (5.70:1 sobre blanco) */
-  --chart-4: #0f9d6b; /* ok como BORDE/ICONO (3:1); como TEXTO usar --ok-text */
-  --chart-5: #d97706; /* warning como BORDE/ICONO (3:1); como TEXTO usar --warn-text */
+  /* Color semántico vivo (claro): púrpura PK del pill (Switch tone="accent"). */
+  --chart-3: #7c3aed; /* pk — 4.90:1 sobre #f1ebfe (AA) */
+
+  /* NUEVO: fondo sutil del tab activo del wizard (azul muy tenue). El texto
+     activo #1e293b sobre #eef4fe = 13.24:1 (AAA). */
+  --tab-active-bg: #eef4fe;
 }
 
 /*
@@ -105,14 +110,14 @@
   script anti-FOUC del <head> y el store de tema (`lib/theme.ts`).
 */
 .dark {
-  --background: #070a13; /* lienzo, lo más oscuro */
-  --foreground: #f8fafc;
+  --background: #0b0f17; /* "Deep Slate": azul muy profundo, casi negro */
+  --foreground: #f3f4f6; /* blanco suavizado, nunca #fff (15.59:1 sobre card) */
 
-  --card: #121829; /* superficie base */
-  --card-foreground: #f8fafc;
+  --card: #131b2e; /* gris azulado sutil que eleva la tarjeta del fondo */
+  --card-foreground: #f3f4f6;
 
-  --popover: #1a2236; /* superficie elevada (aclarado desde #161d31) */
-  --popover-foreground: #f8fafc;
+  --popover: #1a2336; /* superficie elevada: un paso por encima de card (Opción A) */
+  --popover-foreground: #f3f4f6;
 
   /* Botón primario del design system en OSCURO: superficie clara con texto
      oscuro (botón claro, texto oscuro — el patrón original del panel). El azul
@@ -128,10 +133,10 @@
   --secondary-active: #2b3758;
 
   --muted: #1b2338;
-  --muted-foreground: #aeb9cd; /* subido para AA sobre card/background/input */
+  --muted-foreground: #9ca3af; /* texto secundario; AA: 6.76:1 /card, 5.92:1 /input, 4.91:1 /input-elevated */
 
   --accent: #222c45; /* superficie de hover/activo */
-  --accent-foreground: #f8fafc;
+  --accent-foreground: #f3f4f6;
   --accent-hover: #2a3654; /* hover de ghost/outline un paso más claro */
 
   --destructive: #dc2626; /* FONDO de botón: texto blanco 4.83:1 (AA) */
@@ -140,25 +145,29 @@
   --destructive-active: #b91c1c;
   --destructive-text: #f87171; /* TEXTO rojo: 6.39:1 sobre card, 7.15:1 sobre bg */
 
-  --border: #627294; /* borde de control VISIBLE: 3.66:1 sobre card */
-  --border-soft: #273150; /* borde decorativo interno (sin requisito 3:1) */
+  /* Borde de CONTROL (requiere 3:1): #627294 = 3.11:1 sobre input #1b2640,
+     3.56:1 sobre card #131b2e (AA). El hex suave pedido (#2d3e6b = 1.44:1) NO
+     llega a 3:1, así que el borde de control conserva AA (restricción #8) y el
+     hex suave va al borde DECORATIVO de card (--border-soft). */
+  --border: #627294;
+  --border-soft: #1e2740; /* borde decorativo de card (sin requisito 3:1): evita doble borde */
 
   /* Superficies suaves de los pills de resumen (FEAT-001). */
   --pill-principal-bg: #1d2a44; /* azul profundo tenue para el pill «Principal» */
-  --pill-pk-bg: #2a2347; /* púrpura profundo tenue para el pill «PK» */
+  --pill-principal-text: #60a5fa; /* texto del pill principal: 5.63:1 sobre #1d2a44 (AA) */
+  --pill-pk-bg: #2a2347; /* púrpura profundo tenue para el pill «PK» (chart-3 #a78bfa = 5.40:1 AA) */
 
-  --input: #1e2740; /* MÁS CLARO que --card (#121829): el campo "despega" */
-  --input-elevated: #273253; /* input dentro de popover/diálogo: un paso más claro */
-  --input-hover: #243050;
+  --input: #1b2640; /* MÁS CLARO que --card (#131b2e): el campo "despega" (Opción A) */
+  --input-elevated: #243357; /* input dentro de popover/diálogo: un paso más claro */
   --input-surface: var(--input); /* cascada; la reasigna el contenedor elevado */
   /* Borde del INPUT en oscuro: el campo ya resalta por ser más claro que la
-     superficie; el borde usa el mismo --border visible. */
+     superficie; el borde usa el mismo --border visible (3.11:1 sobre input). */
   --input-border: #627294;
 
-  --ring: #60a5fa; /* foco claro y visible (azul identitario claro) */
+  --ring: #60a5fa; /* azul acento claro de foco/links (6.75:1 sobre card) */
 
-  --ok-text: #34d399; /* en oscuro iguala a --chart-4 (ya pasa como texto) */
-  --warn-text: #f59e0b; /* en oscuro iguala a --chart-5 (ya pasa como texto) */
+  --ok-text: #34d399; /* verde claro de TEXTO de éxito (pasa AA sobre card/bg) */
+  --warn-text: #f59e0b; /* ámbar claro de TEXTO de aviso (pasa AA sobre card/bg) */
 
   --shadow-elevation: 0 1px 2px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.3);
 
@@ -172,12 +181,12 @@
   --sidebar-border: #627294;
   --sidebar-ring: #60a5fa;
 
-  /* Charts / colores semánticos (oscuro). */
-  --chart-1: #3b82f6; /* azul identitario */
-  --chart-2: #22d3ee;
-  --chart-3: #a78bfa; /* pk (púrpura) — Switch tone="accent" */
-  --chart-4: #34d399; /* ok (verde) */
-  --chart-5: #f59e0b; /* warning (ámbar) */
+  /* Color semántico vivo (oscuro): púrpura PK del pill (Switch tone="accent"). */
+  --chart-3: #a78bfa; /* pk — 5.40:1 sobre #2a2347 (AA) */
+
+  /* NUEVO: fondo sutil del tab activo del wizard. El texto activo #f3f4f6 sobre
+     #1b2640 = 13.65:1 (AAA). */
+  --tab-active-bg: #1b2640;
 }
 
 @theme inline {
@@ -209,7 +218,9 @@
   --color-warn-text: var(--warn-text);
   --color-border-soft: var(--border-soft);
   --color-pill-principal-bg: var(--pill-principal-bg);
+  --color-pill-principal-text: var(--pill-principal-text);
   --color-pill-pk-bg: var(--pill-pk-bg);
+  --color-tab-active-bg: var(--tab-active-bg);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-input-border: var(--input-border);
@@ -224,11 +235,7 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 
-  --color-chart-1: var(--chart-1);
-  --color-chart-2: var(--chart-2);
   --color-chart-3: var(--chart-3);
-  --color-chart-4: var(--chart-4);
-  --color-chart-5: var(--chart-5);
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);

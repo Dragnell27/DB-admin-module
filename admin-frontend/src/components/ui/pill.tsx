@@ -3,7 +3,7 @@
  *
  * Centraliza los distintivos (<span> redondeados) que etiquetan tablas y
  * columnas en el constructor de módulos. Cuatro variantes semánticas:
- *   - principal → tabla principal (azul de marca, con punto indicador).
+ *   - principal → tabla principal (azul suave AA --pill-principal-text, con punto indicador).
  *   - foranea   → tabla foránea (superficie suave neutra).
  *   - count     → recuento de columnas (superficie suave neutra).
  *   - pk        → recuento de llaves primarias (púrpura --chart-3).
@@ -24,7 +24,7 @@ export interface PillProps {
 }
 
 const variantStyles: Readonly<Record<PillVariant, string>> = {
-  principal: "bg-pill-principal-bg text-ring",
+  principal: "bg-pill-principal-bg text-pill-principal-text",
   foranea: "bg-border-soft text-muted-foreground",
   count: "bg-border-soft text-muted-foreground",
   pk: "bg-pill-pk-bg text-[var(--chart-3)]",
