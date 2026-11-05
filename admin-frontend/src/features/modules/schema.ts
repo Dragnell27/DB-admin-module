@@ -13,6 +13,7 @@ import { z } from "zod";
 import type {
   ActionKind,
   AttributeMap,
+  AuxTable,
   ColumnValueSource,
   DynamicSource,
   FieldSpec,
@@ -777,6 +778,14 @@ export interface WizardState {
   foreignTables: string[];
   /** MULTI-TABLA: relaciones FK dirigidas entre tablas. */
   relationships: RelationshipFormState[];
+  /**
+   * CATÁLOGOS: tablas auxiliares de solo lectura (fetchMapping.auxTables). Sus
+   * `columns` se funden en `pgWhitelist` para que una "Lista dinámica" pueda
+   * apuntar a ellas, pero NO entran a `tables`/syncColumnsMultiTable (no son
+   * tablas del grafo ni generan columnas del grid). No vuelven multi-tabla el
+   * estado (isMultiTableState ignora las auxiliares).
+   */
+  auxTables: AuxTable[];
 }
 
 /** Estado inicial de un asistente nuevo. */
@@ -796,6 +805,7 @@ export function emptyWizardState(): WizardState {
     actions: [],
     foreignTables: [],
     relationships: [],
+    auxTables: [],
   };
 }
 
@@ -1091,6 +1101,19 @@ export function toDefinitionInput(state: WizardState): ModuleDefinitionInput {
   if (state.foreignTables.length > 0) {
     fetchMapping.foreignTables = state.foreignTables.map((t) => ({ table: t }));
   }
+  // CATÁLOGOS: se emiten las tablas auxiliares NORMALIZADAS (tabla y columnas sin
+  // vacíos) solo si queda alguna con tabla no vacía (omitempty: JSONB idéntico al
+  // histórico cuando no hay auxiliares). Sus columnas se funden en pgWhitelist
+  // más abajo (unión sin duplicados, idempotente con el backend).
+  const auxTables: AuxTable[] = state.auxTables
+    .map((a) => ({
+      table: a.table.trim(),
+      columns: a.columns.map((c) => c.trim()).filter((c) => c !== ""),
+    }))
+    .filter((a) => a.table !== "");
+  if (auxTables.length > 0) {
+    fetchMapping.auxTables = auxTables;
+  }
   if (state.relationships.length > 0) {
     fetchMapping.relationships = state.relationships.map((r) => ({
       childTable: r.childTable,
@@ -1152,6 +1175,27 @@ export function toDefinitionInput(state: WizardState): ModuleDefinitionInput {
     variableValues: Object.keys(variableValues).length > 0 ? variableValues : undefined,
   };
 
+  // Lista blanca efectiva: parte del estado y FUNDE las columnas de las tablas
+  // auxiliares (unión sin duplicados, idempotente con el merge del backend), de
+  // modo que una "Lista dinámica" que apunte a una auxiliar valide/ejecute. Las
+  // auxiliares NO entran a `tables`, así que esto no genera columnas del grid.
+  const pgWhitelist: Record<string, string[]> = {};
+  for (const [table, cols] of Object.entries(state.pgWhitelist)) {
+    pgWhitelist[table] = [...cols];
+  }
+  for (const aux of auxTables) {
+    const existing = pgWhitelist[aux.table] ?? [];
+    const seen = new Set(existing);
+    const merged = [...existing];
+    for (const col of aux.columns) {
+      if (!seen.has(col)) {
+        seen.add(col);
+        merged.push(col);
+      }
+    }
+    pgWhitelist[aux.table] = merged;
+  }
+
   return {
     slug: state.slug,
     name: state.name,
@@ -1168,7 +1212,7 @@ export function toDefinitionInput(state: WizardState): ModuleDefinitionInput {
     listConditions,
     dataSource: {
       sourceType: state.sourceType,
-      pgWhitelist: state.pgWhitelist,
+      pgWhitelist,
       connectionTemplateId: state.connectionTemplateId,
       hasSecrets: false,
     },
@@ -1400,10 +1444,27 @@ export function fromDefinition(def: ModuleDefinitionInput): WizardState {
     joinType: r.joinType === "left" ? "left" : "inner",
   }));
 
+  // CATÁLOGOS: hidrata las tablas auxiliares desde fetchMapping.auxTables
+  // (tolerante). Inverso de la emisión en toDefinitionInput; descarta entradas
+  // sin tabla y normaliza las columnas a string. Las auxiliares NO entran a
+  // `tables` ni a syncColumnsMultiTable (no generan columnas del grid).
+  const rawAux = Array.isArray((fetch as { auxTables?: unknown }).auxTables)
+    ? ((fetch as { auxTables: unknown[] }).auxTables as Array<Record<string, unknown>>)
+    : [];
+  const auxTables: AuxTable[] = rawAux
+    .map((a) => ({
+      table: String(a.table ?? ""),
+      columns: Array.isArray(a.columns)
+        ? (a.columns as unknown[]).map((c) => String(c))
+        : [],
+    }))
+    .filter((a) => a.table !== "");
+
   return {
     ...base,
     foreignTables,
     relationships,
+    auxTables,
     slug: def.slug,
     name: def.name,
     // El único origen soportado es PostgreSQL. Las definiciones antiguas de

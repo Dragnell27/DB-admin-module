@@ -310,6 +310,21 @@ export interface ForeignTable {
   table: string;
 }
 
+/**
+ * Tabla AUXILIAR (catálogo) declarada en fetchMapping.auxTables. Es un catálogo
+ * de SOLO LECTURA cuyas `columns` se funden en la lista blanca efectiva del
+ * módulo SIN exigir relación y SIN entrar al árbol de relaciones (no es una
+ * tabla del grafo conexo). Su única función es permitir que una columna o un
+ * campo de acción con fuente "Lista dinámica" (valueSource.dynamic) apunte a
+ * ella para poblar selectores y resolver id→etiqueta al listar (lookup en lote,
+ * sin JOIN). NO genera columnas del grid. Espejo de modules.AuxTable del backend
+ * (FEAT-001); viaja en el JSONB fetch_mapping, sin migración.
+ */
+export interface AuxTable {
+  table: string;
+  columns: string[];
+}
+
 /** Origen de datos del módulo tal como lo devuelve el backend (sin secretos). */
 export interface DataSource {
   sourceType: SourceType;

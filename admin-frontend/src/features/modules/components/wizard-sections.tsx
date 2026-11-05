@@ -518,6 +518,7 @@ export function TablesSection({ state, patch }: SectionProps) {
       <PrincipalTableEditor state={state} patch={patch} />
       <ForeignTablesEditor state={state} patch={patch} />
       <RelationshipsEditor state={state} patch={patch} />
+      <AuxTablesEditor state={state} patch={patch} />
       {warning ? (
         <FeedbackBanner tone="error" message={`Revisa las relaciones: ${warning}`} />
       ) : null}
@@ -683,6 +684,153 @@ function ForeignTableRow({
           value={colsText}
           onChange={(e) => setColsText(e.target.value)}
           placeholder="id, nombre"
+          disabled={!name}
+        />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Editor de TABLAS AUXILIARES (catálogos). A diferencia de las foráneas, una
+ * auxiliar NO pide relación y NO entra al árbol ni al grid: es un catálogo de
+ * solo lectura cuyas columnas se funden en la lista blanca para que una columna
+ * o un campo de acción con «Fuente de valores = Lista dinámica» pueda apuntar a
+ * ella (poblar el selector y resolver id→etiqueta al listar, sin JOIN). Agregar/
+ * editar funde {table, columns} en state.auxTables y en state.pgWhitelist; quitar
+ * retira ambos SIN tocar foráneas ni relaciones.
+ */
+function AuxTablesEditor({ state, patch }: SectionProps) {
+  const addAux = () => {
+    patch({ auxTables: [...state.auxTables, { table: "", columns: [] }] });
+  };
+  const updateAuxName = (i: number, name: string) => {
+    const prev = state.auxTables[i]?.table ?? "";
+    const auxTables = state.auxTables.slice();
+    const cols = auxTables[i]?.columns ?? [];
+    auxTables[i] = { table: name, columns: cols };
+    const whitelist = { ...state.pgWhitelist };
+    // Migra la entrada de lista blanca al renombrar; crea una vacía al nombrar.
+    if (prev && prev !== name) {
+      if (name) {
+        whitelist[name] = whitelist[prev] ?? cols;
+      }
+      delete whitelist[prev];
+    } else if (name && whitelist[name] === undefined) {
+      whitelist[name] = cols;
+    }
+    patch({ auxTables, pgWhitelist: whitelist });
+  };
+  const updateAuxCols = (i: number, columns: string[]) => {
+    const auxTables = state.auxTables.slice();
+    const name = auxTables[i]?.table ?? "";
+    auxTables[i] = { table: name, columns };
+    const whitelist = { ...state.pgWhitelist };
+    if (name) {
+      whitelist[name] = columns;
+    }
+    patch({ auxTables, pgWhitelist: whitelist });
+  };
+  const removeAux = (i: number) => {
+    const name = state.auxTables[i]?.table ?? "";
+    const auxTables = state.auxTables.filter((_, idx) => idx !== i);
+    const whitelist = { ...state.pgWhitelist };
+    // Solo retira la entrada de lista blanca si ninguna otra tabla (principal/
+    // foránea/otra auxiliar) la sigue usando con ese mismo nombre.
+    if (name) {
+      const stillUsed =
+        name === state.pgTable ||
+        state.foreignTables.includes(name) ||
+        auxTables.some((a) => a.table === name);
+      if (!stillUsed) {
+        delete whitelist[name];
+      }
+    }
+    patch({ auxTables, pgWhitelist: whitelist });
+  };
+
+  return (
+    <div className="space-y-4 rounded-md border border-border/60 p-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-medium">Tablas auxiliares (catálogos)</p>
+        <Button type="button" variant="outline" size="sm" onClick={addAux}>
+          Agregar tabla auxiliar
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Catálogos de solo lectura para poblar selectores y resolver id→etiqueta en
+        el listado. NO hacen JOIN, NO exigen relación y NO generan columnas del
+        grid: sus columnas solo entran a la lista blanca para que una «Lista
+        dinámica» pueda apuntar a ellas.
+      </p>
+      {state.auxTables.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          Sin tablas auxiliares: no hay catálogos adicionales declarados.
+        </p>
+      ) : null}
+      {state.auxTables.map((aux, i) => (
+        <AuxTableRow
+          key={i}
+          name={aux.table}
+          columns={aux.columns}
+          onNameChange={(n) => updateAuxName(i, n)}
+          onColumnsChange={(cols) => updateAuxCols(i, cols)}
+          onRemove={() => removeAux(i)}
+        />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Fila de una tabla auxiliar (catálogo). Igual que `ForeignTableRow`, mantiene el
+ * TEXTO CRUDO de la lista blanca en estado local y lo parsea en un efecto, de
+ * modo que escribir comas y espacios funcione sin borrar la coma recién tecleada.
+ */
+function AuxTableRow({
+  name,
+  columns,
+  onNameChange,
+  onColumnsChange,
+  onRemove,
+}: {
+  readonly name: string;
+  readonly columns: string[];
+  readonly onNameChange: (name: string) => void;
+  readonly onColumnsChange: (columns: string[]) => void;
+  readonly onRemove: () => void;
+}) {
+  const [colsText, setColsText] = React.useState(columns.join(", "));
+
+  React.useEffect(() => {
+    const parsed = colsText.split(",").map((c) => c.trim()).filter(Boolean);
+    const current = columns;
+    const changed =
+      parsed.length !== current.length ||
+      parsed.some((c, i) => c !== current[i]);
+    if (changed) {
+      onColumnsChange(parsed);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [colsText]);
+
+  return (
+    <div className="space-y-2 rounded-md border border-border/40 p-3">
+      <div className="flex items-end gap-2">
+        <div className="flex-1 space-y-1.5">
+          <Label>Tabla auxiliar</Label>
+          <Input value={name} onChange={(e) => onNameChange(e.target.value)} placeholder="countries" />
+        </div>
+        <Button type="button" variant="destructive" size="sm" onClick={onRemove}>
+          Quitar
+        </Button>
+      </div>
+      <div className="space-y-1.5">
+        <Label>Columnas permitidas (lista blanca)</Label>
+        <Input
+          value={colsText}
+          onChange={(e) => setColsText(e.target.value)}
+          placeholder="id, name"
           disabled={!name}
         />
       </div>
