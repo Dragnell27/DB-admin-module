@@ -616,7 +616,7 @@ func validateFillStrategies(def *Definition) error {
 				return fmt.Errorf("%w: el campo %q de la acción %q usa fillStrategy pero no declara estrategia", ErrMultiTableValidation, f.Name, act.ActionKey)
 			}
 			s := f.Strategy
-			isCapture := strings.HasPrefix(f.Name, CaptureKeyPrefix)
+			isCapture := f.IsCaptureOnly()
 
 			// Regla 3: ningún __capture_ coincide con columna de la tabla objetivo.
 			if isCapture {
@@ -1014,13 +1014,13 @@ func validateMultiTable(def *Definition) error {
 				if f.Source == FieldSourceRow {
 					continue
 				}
-				// Las capturas que NO escriben a columna (prefijo reservado
-				// __capture_) NO son columnas de la tabla objetivo: su valor solo
-				// alimenta derivaciones y la proyección final del motor las descarta
-				// antes del INSERT. Se eximen de la comprobación "name ∈
-				// whitelist[target]"/"name es columna"; su whitelist de catálogo la
-				// valida validateFillStrategies.
-				if strings.HasPrefix(f.Name, CaptureKeyPrefix) {
+				// Las capturas que NO escriben a columna (campos solo-captura:
+				// prefijo reservado __capture_ o flag explícito CaptureOnly) NO son
+				// columnas de la tabla objetivo: su valor solo alimenta derivaciones
+				// y la proyección final del motor las descarta antes del INSERT. Se
+				// eximen de la comprobación "name ∈ whitelist[target]"/"name es
+				// columna"; su whitelist de catálogo la valida validateFillStrategies.
+				if f.IsCaptureOnly() {
 					continue
 				}
 				if _, ok := set[f.Name]; !ok {

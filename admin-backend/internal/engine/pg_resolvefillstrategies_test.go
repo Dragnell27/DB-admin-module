@@ -141,6 +141,69 @@ func TestResolveFillStrategies_HappyPath(t *testing.T) {
 	}
 }
 
+// TestResolveFillStrategies_CaptureOnlyFlagNoPrefix (MEJORA 4): un campo
+// solo-captura marcado con el flag explícito CaptureOnly y un Name SIN prefijo
+// (p. ej. "comercio_sel") debe comportarse igual que el __capture_ histórico: el
+// motor NO lo escribe a columna y la proyección final lo descarta, pero su valor
+// SÍ alimenta las derivaciones derive-via-fk.
+func TestResolveFillStrategies_CaptureOnlyFlagNoPrefix(t *testing.T) {
+	drv := &recordedDriver{}
+	var padreSelects int
+	drv.queryResponder = func(query string, args []driver.NamedValue) ([]string, [][]driver.Value, bool) {
+		switch {
+		case strings.Contains(query, `FROM "gt_valores"`):
+			return []string{"codigo", "list_numero", "valo_numero", "valor_es"},
+				[][]driver.Value{{"MP01", int64(10001), int64(55), "Tarjeta"}}, true
+		case strings.Contains(query, `FROM "gt_valores_padre"`):
+			padreSelects++
+			return []string{"depe_numero", "padr_numero"},
+				[][]driver.Value{{int64(777), int64(999)}}, true
+		}
+		return nil, nil, false
+	}
+
+	// Renombra la captura del comercio a un name SIN prefijo + flag CaptureOnly y
+	// ajusta el LocalCaptureKey no hace falta (es por CaptureKey, no por name).
+	act := fsAction()
+	for i := range act.InputFields {
+		f := &act.InputFields[i]
+		if f.Name == "__capture_comercio" {
+			f.Name = "comercio_sel"
+			f.CaptureOnly = true
+		}
+	}
+
+	tx, done := openFakeTx(t, drv)
+	defer done()
+
+	input := map[string]any{
+		"comercio_sel": int64(42), // captura por name SIN prefijo
+		"valor_lista":  int64(55),
+	}
+	out, err := resolveFillStrategies(context.Background(), tx, fsWL(), act, input)
+	if err != nil {
+		t.Fatalf("error inesperado: %v", err)
+	}
+	// El valor alimentó la derivación (el salto se resolvió).
+	if out["padr_numero"] != int64(999) || out["depe_numero"] != int64(777) {
+		t.Fatalf("la captura por flag debe alimentar derive-via-fk: padr=%v depe=%v", out["padr_numero"], out["depe_numero"])
+	}
+	if padreSelects != 1 {
+		t.Fatalf("se esperaba 1 SELECT a gt_valores_padre, got %d", padreSelects)
+	}
+	// La proyección final descarta el campo solo-captura (no es columna objetivo).
+	if _, ok := out["comercio_sel"]; ok {
+		t.Fatalf("la proyección final debe descartar el campo CaptureOnly: %+v", out)
+	}
+	for k := range out {
+		switch k {
+		case "valor_lista", "list_numero_h", "padr_numero", "depe_numero":
+		default:
+			t.Fatalf("clave inesperada tras la proyección final: %q", k)
+		}
+	}
+}
+
 // TestResolveFillStrategies_JumpZeroRows: 0 filas en el salto ⇒ ErrDeriveRelation.
 func TestResolveFillStrategies_JumpZeroRows(t *testing.T) {
 	drv := &recordedDriver{}

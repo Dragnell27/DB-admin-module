@@ -294,3 +294,56 @@ func TestValidateFillStrategies_UniquenessWithoutTargetTable(t *testing.T) {
 		t.Fatalf("se esperaba rechazo por unicidad sin tabla objetivo: %v", err)
 	}
 }
+
+// MEJORA 4: un campo solo-captura marcado con el flag explícito CaptureOnly y un
+// Name SIN el prefijo reservado (p. ej. "comercio_sel") debe comportarse igual
+// que el __capture_ histórico: NO se exige que sea columna de la tabla objetivo
+// y la definición sigue siendo válida.
+func TestValidateFillStrategies_CaptureOnlyFlagWithoutPrefix(t *testing.T) {
+	def := validFillStrategyDef()
+	for i := range def.Actions[0].InputFields {
+		f := &def.Actions[0].InputFields[i]
+		if f.Name == "__capture_comercio" {
+			f.Name = "comercio_sel" // name SIN prefijo
+			f.CaptureOnly = true    // pero marcado solo-captura por flag
+		}
+	}
+	if err := validateDefinition(def); err != nil {
+		t.Fatalf("un campo CaptureOnly sin prefijo debe validar igual que __capture_: %v", err)
+	}
+}
+
+// MEJORA 4 (retrocompat): sin el flag ni el prefijo, el mismo name "comercio_sel"
+// es un campo de ESCRITURA y, al no ser columna de la tabla objetivo, la
+// validación debe rechazarlo. Demuestra que el flag es lo que exime, no el name.
+func TestValidateFillStrategies_CaptureOnlyFlagRequiredWithoutPrefix(t *testing.T) {
+	def := validFillStrategyDef()
+	for i := range def.Actions[0].InputFields {
+		f := &def.Actions[0].InputFields[i]
+		if f.Name == "__capture_comercio" {
+			f.Name = "comercio_sel" // name SIN prefijo y SIN flag CaptureOnly
+		}
+	}
+	err := validateFillStrategies(def)
+	if err == nil || !errors.Is(err, ErrMultiTableValidation) {
+		t.Fatalf("sin prefijo ni flag, una captura de escritura fuera de whitelist debe rechazarse: %v", err)
+	}
+}
+
+// IsCaptureOnly cubre ambos caminos: prefijo reservado y flag explícito.
+func TestFieldSpec_IsCaptureOnly(t *testing.T) {
+	cases := []struct {
+		name  string
+		field FieldSpec
+		want  bool
+	}{
+		{"prefijo reservado", FieldSpec{Name: "__capture_comercio"}, true},
+		{"flag explícito sin prefijo", FieldSpec{Name: "comercio_sel", CaptureOnly: true}, true},
+		{"campo normal de escritura", FieldSpec{Name: "valor_lista"}, false},
+	}
+	for _, c := range cases {
+		if got := c.field.IsCaptureOnly(); got != c.want {
+			t.Fatalf("%s: IsCaptureOnly()=%v, want %v", c.name, got, c.want)
+		}
+	}
+}

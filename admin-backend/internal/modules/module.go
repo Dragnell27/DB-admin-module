@@ -15,6 +15,7 @@ package modules
 
 import (
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -273,6 +274,27 @@ type FieldSpec struct {
 	// origen DEBE declararla. Ausente ⇒ omitempty ⇒ JSONB byte-por-byte idéntico
 	// para definiciones sin estrategias (retrocompat).
 	Strategy *FillStrategy `json:"strategy,omitempty"`
+	// Label es la etiqueta legible mostrada en el formulario de ejecución para
+	// este campo. Vacío ⇒ el formulario usa el Name SIN el prefijo
+	// CaptureKeyPrefix ("__capture_"). Viaja en el JSON de input_fields, sin
+	// migración (omitempty ⇒ retrocompat byte-por-byte).
+	Label string `json:"label,omitempty"`
+	// CaptureOnly marca un campo AUXILIAR de solo captura: alimenta derivaciones
+	// (derive-via-fk / derive-from-option) pero NO escribe ninguna columna de la
+	// tabla objetivo. Equivale semánticamente a que el Name empiece por
+	// CaptureKeyPrefix; es el camino EXPLÍCITO que la UI puede marcar sin
+	// depender del prefijo del Name. Ver IsCaptureOnly. omitempty ⇒ retrocompat.
+	CaptureOnly bool `json:"captureOnly,omitempty"`
+}
+
+// IsCaptureOnly indica si el campo es de SOLO CAPTURA (no escribe columna de la
+// tabla objetivo). Es true cuando el Name usa el prefijo reservado
+// CaptureKeyPrefix (camino histórico) o cuando el flag explícito CaptureOnly
+// está activo (camino nuevo marcable desde la UI). Las validaciones de
+// persistencia y el motor usan este predicado para eximir estos campos de la
+// regla "name ∈ columnas de la tabla objetivo".
+func (f FieldSpec) IsCaptureOnly() bool {
+	return strings.HasPrefix(f.Name, CaptureKeyPrefix) || f.CaptureOnly
 }
 
 // Action es el modelo de dominio de una acción del módulo (una fila de

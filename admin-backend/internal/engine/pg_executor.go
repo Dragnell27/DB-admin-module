@@ -1456,8 +1456,9 @@ func resolveFillStrategies(ctx context.Context, tx txExecer, whitelist map[strin
 		}
 		// Si el valor a escribir es el propio id, no hace falta releer para la
 		// escritura directa; la relectura por derivaciones se hace en la fase 2.
-		if strings.HasPrefix(f.Name, modules.CaptureKeyPrefix) {
-			// Captura que NO escribe a columna: su valor solo alimenta derivaciones.
+		if f.IsCaptureOnly() {
+			// Campo solo-captura (prefijo __capture_ o flag CaptureOnly): su valor
+			// solo alimenta derivaciones, NO escribe a columna de la tabla objetivo.
 			continue
 		}
 		if storeColumn == s.Catalog.IDColumn {
