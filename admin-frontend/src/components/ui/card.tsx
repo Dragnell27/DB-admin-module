@@ -15,7 +15,10 @@ const Card = React.forwardRef<
   <div
     ref={ref}
     className={cn(
-      "rounded-lg border border-border bg-card text-card-foreground shadow-elevation",
+      // Borde SUAVE (--border-soft) + sombra de elevación: la tarjeta se
+      // distingue por la sombra, no por un borde duro idéntico al del input
+      // (evita el "doble borde" card+input). El borde del INPUT sí es visible.
+      "rounded-lg border border-border-soft bg-card text-card-foreground shadow-elevation",
       className,
     )}
     {...props}

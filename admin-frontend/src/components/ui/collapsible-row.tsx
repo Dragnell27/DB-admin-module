@@ -71,7 +71,9 @@ export function CollapsibleRow({
   return (
     <div
       className={cn(
-        "rounded-lg border border-border bg-card shadow-elevation",
+        // Borde SUAVE + sombra: coherente con Card, evita el doble borde
+        // (fila+input) en las filas colapsables del constructor.
+        "rounded-lg border border-border-soft bg-card shadow-elevation",
         className,
       )}
     >

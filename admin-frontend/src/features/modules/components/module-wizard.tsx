@@ -356,7 +356,7 @@ export function ModuleWizard({ initial, editSlug, title }: ModuleWizardProps) {
                   className={cn(
                     "flex items-center gap-2 whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium transition-colors",
                     isActive
-                      ? "border-primary text-foreground"
+                      ? "rounded-t-md bg-tab-active-bg border-primary text-foreground"
                       : "border-transparent text-muted-foreground hover:text-foreground",
                   )}
                 >
