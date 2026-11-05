@@ -48,6 +48,8 @@ function field(source: FieldFormState["source"], strategy: StrategyFormState): F
     dynamicSource: { table: "", idColumn: "", labelColumn: "", order: { column: "", direction: "asc" } },
     dynamicFilters: [],
     hidden: false,
+    label: "",
+    captureOnly: false,
     strategy,
   };
 }

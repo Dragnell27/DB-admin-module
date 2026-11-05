@@ -220,6 +220,19 @@ export interface FieldSpec {
    */
   sourceTable?: string;
   /**
+   * Etiqueta legible que el formulario de ejecución muestra para este campo. Si
+   * está vacía, el formulario usa el `name` SIN el prefijo `__capture_`. Espejo
+   * de modules.FieldSpec.Label (viaja en el JSON de inputFields, sin migración).
+   */
+  label?: string;
+  /**
+   * Campo AUXILIAR de solo captura: alimenta derivaciones (derive-via-fk /
+   * derive-from-option) pero NO escribe ninguna columna de la tabla objetivo. El
+   * backend lo trata igual que un `name` con prefijo `__capture_` (ver
+   * modules.FieldSpec.CaptureOnly / IsCaptureOnly). Ausente = false.
+   */
+  captureOnly?: boolean;
+  /**
    * DEPRECADO: la llave primaria pasó a declararse A NIVEL DE COLUMNA
    * (`DisplayColumn.isPrimaryKey`). El constructor ya no produce este campo; se
    * deja opcional solo para no romper el parseo de respuestas antiguas en vuelo.

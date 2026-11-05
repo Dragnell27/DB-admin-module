@@ -157,6 +157,19 @@ export interface FieldFormState {
    */
   sourceTable?: string;
   /**
+   * Etiqueta legible que el formulario de ejecución muestra para este campo.
+   * Vacío ⇒ el formulario usa el `name` SIN el prefijo `__capture_`.
+   * `toDefinitionInput` emite `label` SOLO cuando es no vacío (omitempty).
+   */
+  label: string;
+  /**
+   * Campo auxiliar de SOLO CAPTURA: alimenta derivaciones pero NO escribe columna
+   * de la tabla objetivo. Cuando es true, el editor NO exige "columna objetivo" y
+   * el backend lo trata igual que el prefijo `__capture_`. `toDefinitionInput`
+   * emite `captureOnly` SOLO cuando es true (omitempty).
+   */
+  captureOnly: boolean;
+  /**
    * SOLO acciones SELECT (filtro de listado): tipo de coincidencia del predicado.
    * "exact" (default) ⇒ igualdad; "partial" ⇒ LIKE contiene. El backend es la
    * autoridad de la semántica SQL; se ignora en INSERT/UPDATE/DELETE.
@@ -1064,6 +1077,11 @@ export function toDefinitionInput(state: WizardState): ModuleDefinitionInput {
           effectiveSqlOp(a) === "SELECT" && f.matchType === "partial"
             ? "partial"
             : undefined,
+        // label: etiqueta legible del formulario de ejecución; omitempty (solo si
+        // tiene contenido tras trim).
+        label: f.label?.trim() ? f.label.trim() : undefined,
+        // captureOnly: campo auxiliar solo-captura; omitempty (solo si true).
+        captureOnly: f.captureOnly || undefined,
       }),
     ),
     };
@@ -1480,6 +1498,9 @@ export function fromDefinition(def: ModuleDefinitionInput): WizardState {
           valuesText: (cond.values ?? []).join(", "),
         })),
         hidden: Boolean(f.hidden),
+        // label/captureOnly tolerantes: ausentes ⇒ "" / false (retrocompat).
+        label: f.label ?? "",
+        captureOnly: Boolean(f.captureOnly),
         // Estrategia de llenado tolerante: ausente ⇒ estado por defecto; inverso
         // de toStrategy (retrocompat, INV-9).
         strategy: strategyFromDefinition(f.strategy),
@@ -1719,6 +1740,13 @@ export function declaredCaptureKeys(a: ActionFormState, selfIndex: number): stri
  * frontend; NO sustituye la del backend (autoridad final). Función pura.
  */
 export function fieldTargetColumnError(field: FieldFormState): string | null {
+  // Un campo auxiliar de SOLO CAPTURA (captureOnly) NO escribe columna de la
+  // tabla objetivo: su `name` es la clave de captura, no una columna. El backend
+  // lo exime igual que al prefijo `__capture_`, así que aquí tampoco exigimos
+  // columna objetivo (MEJORA 4).
+  if (field.captureOnly) {
+    return null;
+  }
   return field.name.trim() === "" ? "Falta la columna objetivo" : null;
 }
 

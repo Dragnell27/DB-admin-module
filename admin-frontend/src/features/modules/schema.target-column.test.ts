@@ -32,6 +32,8 @@ function baseField(overrides: Partial<FieldFormState> = {}): FieldFormState {
     dynamicSource: { table: "", idColumn: "", labelColumn: "", order: { column: "", direction: "asc" } },
     dynamicFilters: [],
     hidden: false,
+    label: "",
+    captureOnly: false,
     strategy: emptyStrategyFormState(),
     ...overrides,
   };
@@ -81,6 +83,12 @@ describe("fieldTargetColumnError", () => {
 
   it("name con columna ⇒ null", () => {
     expect(fieldTargetColumnError(baseField({ name: "valor_objeto" }))).toBeNull();
+  });
+
+  it("MEJORA 4: captureOnly ⇒ null aunque name esté vacío", () => {
+    expect(
+      fieldTargetColumnError(baseField({ name: "", captureOnly: true })),
+    ).toBeNull();
   });
 });
 

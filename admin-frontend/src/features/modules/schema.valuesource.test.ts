@@ -55,6 +55,8 @@ function baseField(overrides: Partial<FieldFormState> = {}): FieldFormState {
     dynamicSource: { table: "", idColumn: "", labelColumn: "", order: { column: "", direction: "asc" } },
     dynamicFilters: [],
     hidden: false,
+    label: "",
+    captureOnly: false,
     strategy: emptyStrategyFormState(),
     ...overrides,
   };

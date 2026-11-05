@@ -173,6 +173,8 @@ describe("round-trip de contrato tras el cambio de UI", () => {
               dynamicSource: { table: "", idColumn: "", labelColumn: "", order: { column: "", direction: "asc" }, limit: undefined },
               dynamicFilters: [],
               hidden: false,
+              label: "",
+              captureOnly: false,
               strategy: emptyStrategyFormState(),
               sourceTable: "gt_valores_hijo",
             },
@@ -264,6 +266,8 @@ describe("regresión: campo de la tabla PRINCIPAL no queda huérfano al reeditar
               dynamicSource: { table: "", idColumn: "", labelColumn: "", order: { column: "", direction: "asc" }, limit: undefined },
               dynamicFilters: [],
               hidden: false,
+              label: "",
+              captureOnly: false,
               strategy: emptyStrategyFormState(),
               matchType: "exact",
               // sourceTable apunta a la PRINCIPAL ⇒ toDefinitionInput lo omitirá.
