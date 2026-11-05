@@ -500,6 +500,63 @@ func whitelistSetOf(wl map[string][]string, table string) (map[string]struct{}, 
 	return set, true
 }
 
+// mergeAuxTablesIntoWhitelist es el ÚNICO punto que funde las tablas auxiliares
+// (catálogos declarados en fetchMapping.auxTables) en la lista blanca efectiva
+// del módulo ANTES de validar y de persistir. Por cada auxiliar añade sus
+// columnas a def.DataSource.PGWhitelist[table] como UNIÓN sin duplicados, de modo
+// que validateMultiTable, validateColumnValueSources, el motor de listado y el
+// endpoint de options vean UNA sola whitelist. Antes valida las guardas de las
+// auxiliares (table/columns no vacías; sin choque de nombre con la principal o
+// una foránea). Las auxiliares NO entran a spec.Tables(), por lo que no disparan
+// el grafo conexo de BuildRelationTree. Devuelve ErrMultiTableValidation (→ E422)
+// ante una auxiliar inválida.
+func mergeAuxTablesIntoWhitelist(def *Definition) error {
+	spec := MultiTableFromFetchMapping(def.FetchMapping)
+	if len(spec.AuxTables) == 0 {
+		return nil
+	}
+
+	// Conjunto de tablas del árbol (principal + foráneas): una auxiliar no puede
+	// chocar con ellas (son conceptos distintos: catálogo vs tabla del grid).
+	treeTables := make(map[string]struct{}, len(spec.Tables()))
+	for _, t := range spec.Tables() {
+		treeTables[t] = struct{}{}
+	}
+
+	for _, aux := range spec.AuxTables {
+		if aux.Table == "" {
+			return fmt.Errorf("%w: una tabla auxiliar no declara nombre de tabla", ErrMultiTableValidation)
+		}
+		if len(aux.Columns) == 0 {
+			return fmt.Errorf("%w: la tabla auxiliar %q no declara columnas", ErrMultiTableValidation, aux.Table)
+		}
+		if _, clash := treeTables[aux.Table]; clash {
+			return fmt.Errorf("%w: la tabla auxiliar %q choca con la tabla principal o una foránea del módulo", ErrMultiTableValidation, aux.Table)
+		}
+	}
+
+	// Fusión: unión sin duplicados de las columnas auxiliares en la whitelist.
+	if def.DataSource.PGWhitelist == nil {
+		def.DataSource.PGWhitelist = map[string][]string{}
+	}
+	for table, cols := range spec.AuxWhitelist() {
+		existing := def.DataSource.PGWhitelist[table]
+		seen := make(map[string]struct{}, len(existing))
+		for _, c := range existing {
+			seen[c] = struct{}{}
+		}
+		for _, c := range cols {
+			if _, dup := seen[c]; dup {
+				continue
+			}
+			seen[c] = struct{}{}
+			existing = append(existing, c)
+		}
+		def.DataSource.PGWhitelist[table] = existing
+	}
+	return nil
+}
+
 // validateDefinition valida las invariantes de una definición antes de persistir.
 func validateDefinition(def *Definition) error {
 	if !auth.IsValidSlug(def.Slug) {
@@ -513,6 +570,15 @@ func validateDefinition(def *Definition) error {
 	// definiciones de ese tipo.
 	if def.SourceType != SourcePostgres {
 		return fmt.Errorf("modules: tipo de origen no soportado %q; solo se permite %q", def.SourceType, SourcePostgres)
+	}
+	// Funde las tablas auxiliares (catálogos) en la lista blanca efectiva ANTES de
+	// cualquier validación que la consulte. Es el único punto de fusión: tras él,
+	// validateMultiTable/validateColumnValueSources, el motor y el endpoint de
+	// options ven una sola whitelist (con los catálogos ya incluidos), y la
+	// persistencia (insertDataSource) escribe esa misma whitelist. Las auxiliares
+	// no entran a Tables(), así que no disparan el grafo conexo.
+	if err := mergeAuxTablesIntoWhitelist(def); err != nil {
+		return err
 	}
 	// Invariante del rediseño columna-céntrico: un módulo con acciones de editar
 	// o eliminar DEBE declarar al menos una columna llave primaria (el WHERE de

@@ -157,6 +157,11 @@ func (e *PGExecutor) listCore(ctx context.Context, def modules.Definition, count
 	if err != nil {
 		return nil, Pagination{}, err
 	}
+	// Resolución id→etiqueta en LOTE de las columnas con fuente dinámica a tablas
+	// auxiliares (opción b: una consulta por catálogo por página, sin N+1). Es
+	// ADITIVA: si no hay columnas dinámicas, 0 consultas extra y las filas quedan
+	// byte-por-byte como hoy; ante fallo degrada mostrando el id crudo.
+	e.resolveAuxLabels(ctx, def, spec, result)
 	totalPages := int((total + int64(per) - 1) / int64(per))
 	return result, Pagination{TotalRecords: total, Page: page, RecordsPerPage: per, TotalPages: totalPages}, nil
 }

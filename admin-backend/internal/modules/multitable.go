@@ -64,11 +64,28 @@ type Relationship struct {
 	JoinType string `json:"joinType"`
 }
 
+// AuxTable declara una TABLA AUXILIAR (catálogo) del módulo: una tabla de la
+// misma conexión cuyas columnas sirven SOLO para resolver id→etiqueta en el
+// listado (vía una columna con valueSource.dynamic), NUNCA como columna del grid
+// ni como tabla del árbol de relaciones. A diferencia de una ForeignTable, NO
+// entra en Tables() (no exige JOIN ni grafo conexo); su único efecto es fundir
+// Columns en la lista blanca efectiva para que el motor y el endpoint de options
+// las acepten. Table es el nombre de la tabla; Columns la whitelist de columnas
+// que el catálogo puede leer (id/etiqueta/filtros).
+type AuxTable struct {
+	Table   string   `json:"table"`
+	Columns []string `json:"columns"`
+}
+
 // MultiTableSpec es la vista tipada de fetchMapping para multi-tabla.
 type MultiTableSpec struct {
 	PrincipalTable string
 	ForeignTables  []ForeignTable
 	Relationships  []Relationship
+	// AuxTables son las tablas auxiliares (catálogos) del módulo. NO forman parte
+	// de Tables() ni de IsMultiTable(): son catálogos para resolver etiquetas, no
+	// tablas del árbol.
+	AuxTables []AuxTable
 }
 
 // fetchMappingMultiTable es la forma JSON intermedia para decodificar las claves
@@ -76,6 +93,7 @@ type MultiTableSpec struct {
 type fetchMappingMultiTable struct {
 	ForeignTables []ForeignTable `json:"foreignTables"`
 	Relationships []Relationship `json:"relationships"`
+	AuxTables     []AuxTable     `json:"auxTables"`
 }
 
 // MultiTableFromFetchMapping decodifica la vista multi-tabla de fetchMapping con
@@ -101,7 +119,40 @@ func MultiTableFromFetchMapping(fm map[string]any) MultiTableSpec {
 	}
 	spec.ForeignTables = raw.ForeignTables
 	spec.Relationships = raw.Relationships
+	spec.AuxTables = raw.AuxTables
 	return spec
+}
+
+// AuxWhitelist devuelve la lista blanca aportada por las tablas auxiliares:
+// map[table][]columns, sin duplicar columnas por tabla y fusionando varias
+// entradas que declaren la misma tabla. Tablas con nombre vacío se omiten. Es la
+// base para fundir los catálogos en la whitelist efectiva (repository.go) sin
+// que entren a Tables().
+func (s MultiTableSpec) AuxWhitelist() map[string][]string {
+	if len(s.AuxTables) == 0 {
+		return nil
+	}
+	out := make(map[string][]string, len(s.AuxTables))
+	for _, aux := range s.AuxTables {
+		if aux.Table == "" {
+			continue
+		}
+		seen := make(map[string]struct{}, len(out[aux.Table]))
+		for _, c := range out[aux.Table] {
+			seen[c] = struct{}{}
+		}
+		for _, c := range aux.Columns {
+			if c == "" {
+				continue
+			}
+			if _, dup := seen[c]; dup {
+				continue
+			}
+			seen[c] = struct{}{}
+			out[aux.Table] = append(out[aux.Table], c)
+		}
+	}
+	return out
 }
 
 // IsMultiTable es el ÚNICO predicado que decide si un módulo es multi-tabla. Lo
