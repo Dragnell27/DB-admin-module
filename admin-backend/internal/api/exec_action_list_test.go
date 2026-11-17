@@ -139,7 +139,7 @@ func selectFilterDef() *modules.Definition {
 				ActionKey:   "custom:buscar",
 				Kind:        modules.ActionKindCustom,
 				SQLOp:       "SELECT",
-				InputFields: []modules.FieldSpec{{Name: "estado", Type: "string", MatchType: modules.SearchMatchExact}},
+				InputFields: []modules.FieldSpec{{Name: "estado", Type: "string"}},
 			},
 		},
 	}
@@ -227,7 +227,7 @@ func searchFilterDef() *modules.Definition {
 				ActionKey:   "buscar",
 				Kind:        modules.ActionKindSearch,
 				SQLOp:       "SELECT",
-				InputFields: []modules.FieldSpec{{Name: "estado", Type: "string", MatchType: modules.SearchMatchExact}},
+				InputFields: []modules.FieldSpec{{Name: "estado", Type: "string"}},
 			},
 		},
 	}
@@ -310,5 +310,66 @@ func TestExecActionList_ActionNotFound(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status: got %d want 404 (body=%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// Un operador desconocido en un filtro de acción (definición manipulada fuera
+// del guardado) responde 422 E422_VALIDATION y no 502.
+func TestExecActionList_UnknownOperatorIs422(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	def := selectFilterDef()
+	def.Actions[1].InputFields[0].Operator = "zzz"
+	h := NewModulesHandler(&execListFakeRepo{def: def}, newExecListPG(&execListDriver{}), nil, nil)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Params = gin.Params{{Key: "slug", Value: "medios"}, {Key: "actionId", Value: "custom:buscar"}}
+	c.Request = httptest.NewRequest(http.MethodPost, "/modules/medios/actions/custom:buscar/list", strings.NewReader(`{"estado":"x"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	h.ExecActionList(c)
+	assertValidation422(t, rec)
+}
+
+// Un operador desconocido en las condiciones de listado responde 422
+// E422_VALIDATION y no 502.
+func TestList_UnknownOperatorIs422(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	def := selectFilterDef()
+	def.ListConditions = []modules.ListCondition{{Field: "estado", Operator: "zzz", Values: []string{"1"}}}
+	h := NewModulesHandler(&execListFakeRepo{def: def}, newExecListPG(&execListDriver{}), nil, nil)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Params = gin.Params{{Key: "slug", Value: "medios"}}
+	c.Request = httptest.NewRequest(http.MethodGet, "/modules/medios/list", nil)
+	h.List(c)
+	assertValidation422(t, rec)
+}
+
+// ErrInvalidCondition (rechazo de guardado) se mapea a 422 E422_VALIDATION con
+// el mensaje específico.
+func TestWriteDefError_InvalidCondition(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	h := &ModulesHandler{}
+	h.writeDefError(c, modules.ValidateOperator("zzz"))
+	assertValidation422(t, rec)
+	if !strings.Contains(rec.Body.String(), "zzz") {
+		t.Fatalf("se esperaba el mensaje específico: %s", rec.Body.String())
+	}
+}
+
+func assertValidation422(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status: got %d want 422 (body=%s)", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		ErrorCode string `json:"errorCode"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("respuesta no es JSON: %v (%s)", err, rec.Body.String())
+	}
+	if body.ErrorCode != "E422_VALIDATION" {
+		t.Fatalf("code: got %q want E422_VALIDATION (body=%s)", body.ErrorCode, rec.Body.String())
 	}
 }

@@ -580,6 +580,11 @@ func validateDefinition(def *Definition) error {
 	if err := mergeAuxTablesIntoWhitelist(def); err != nil {
 		return err
 	}
+	// Operadores de comparación de condiciones, filtros de catálogo, constantes
+	// del ON y filtros de acción (N=1 y multi-tabla). Envuelve ErrInvalidCondition.
+	if err := validateConditionOperators(def); err != nil {
+		return err
+	}
 	// Invariante del rediseño columna-céntrico: un módulo con acciones de editar
 	// o eliminar DEBE declarar al menos una columna llave primaria (el WHERE de
 	// UPDATE/DELETE se deriva de ella). No se acepta el fallback heredado isKey al
@@ -609,6 +614,93 @@ func validateDefinition(def *Definition) error {
 	// de catálogos/saltos. Todo rechazo envuelve ErrMultiTableValidation (→ E422).
 	if err := validateFillStrategies(def); err != nil {
 		return err
+	}
+	return nil
+}
+
+// validateConditionOperators valida los operadores de comparación de todas las
+// superficies que los admiten: condiciones de listado, filtros de catálogo
+// (fuentes dinámicas de columna y de campo, catálogo de estrategias),
+// constantes del ON y el operador de los campos de acción. Una condición sin
+// operador es legado y no se valida (el motor la tolera igual); con operador se
+// exige aridad y valores no vacíos. Todo error envuelve ErrInvalidCondition.
+func validateConditionOperators(def *Definition) error {
+	checkConds := func(where string, conds []ListCondition) error {
+		for i, c := range conds {
+			if c.Field == "" || c.Operator == "" {
+				continue
+			}
+			if err := ValidateOperatorValues(c.Operator, c.Values, true); err != nil {
+				return fmt.Errorf("%s #%d (%s): %w", where, i+1, c.Field, err)
+			}
+		}
+		return nil
+	}
+	checkSource := func(where string, ds *DynamicSource) error {
+		if ds == nil {
+			return nil
+		}
+		return checkConds(where, ds.Filters)
+	}
+
+	if err := checkConds("condición de listado", def.ListConditions); err != nil {
+		return err
+	}
+
+	principal := MultiTableFromFetchMapping(def.FetchMapping).PrincipalTable
+	for _, c := range ColumnsFromDisplayMappingWithPrincipal(def.DisplayMapping, principal) {
+		if c.ValueSource == nil || c.ValueSource.Kind != "dynamic" {
+			continue
+		}
+		if err := checkSource(fmt.Sprintf("filtro del catálogo de la columna %q", c.Field), c.ValueSource.DynamicSource); err != nil {
+			return err
+		}
+	}
+
+	for _, act := range def.Actions {
+		for _, f := range act.InputFields {
+			if err := ValidateOperator(f.Operator); err != nil {
+				return fmt.Errorf("el filtro %q de la acción %q: %w", f.Name, act.ActionKey, err)
+			}
+			if err := checkSource(fmt.Sprintf("filtro del catálogo del campo %q (acción %q)", f.Name, act.ActionKey), f.DynamicSource); err != nil {
+				return err
+			}
+			if f.Strategy != nil {
+				if err := checkSource(fmt.Sprintf("filtro del catálogo de la estrategia del campo %q (acción %q)", f.Name, act.ActionKey), f.Strategy.Catalog); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	for _, r := range MultiTableFromFetchMapping(def.FetchMapping).Relationships {
+		for i, jc := range r.OnConstants {
+			if jc.Operator == "" {
+				continue
+			}
+			where := fmt.Sprintf("constante del ON #%d de la relación %q→%q", i+1, r.ChildTable, r.ParentTable)
+			op, values := jc.OperatorValues()
+			if err := ValidateOperator(op); err != nil {
+				return fmt.Errorf("%s: %w", where, err)
+			}
+			switch op {
+			case OpIn, OpNotIn:
+				if jc.Value != "" {
+					return fmt.Errorf("%w: %s: el operador %q usa solo la lista de valores", ErrInvalidCondition, where, string(op))
+				}
+			case OpIsNull, OpIsNotNull:
+				if jc.Value != "" || len(jc.Values) > 0 {
+					return fmt.Errorf("%w: %s: el operador %q no admite valor", ErrInvalidCondition, where, string(op))
+				}
+			default:
+				if len(jc.Values) > 0 {
+					return fmt.Errorf("%w: %s: el operador %q usa solo el valor", ErrInvalidCondition, where, string(op))
+				}
+			}
+			if err := ValidateOperatorValues(op, values, true); err != nil {
+				return fmt.Errorf("%s: %w", where, err)
+			}
+		}
 	}
 	return nil
 }

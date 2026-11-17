@@ -263,11 +263,13 @@ type FieldSpec struct {
 	// con Source=="row" (la PK del WHERE viaja por el camino de columnas aliased
 	// <tabla>__<col>). Ausente ⇒ la tabla principal (compatibilidad N=1).
 	SourceTable string `json:"sourceTable,omitempty"`
-	// MatchType es, para un campo de una acción SELECT (filtro de listado), el
-	// tipo de coincidencia: "exact" (lower(btrim(col::text)) = $n) o "partial"
-	// (lower(col::text) LIKE '%'||lower($n)||'%', patrón con parámetro ligado y
-	// comodines literales). Ausente ⇒ "exact". Solo tiene efecto en acciones
-	// SELECT; para INSERT/UPDATE/DELETE se ignora.
+	// Operator es, para un campo de una acción SELECT (filtro de listado), el
+	// operador de comparación que el admin fija; el valor lo escribe el usuario
+	// final. Ausente ⇒ se deduce de MatchType (ver EffectiveOperator). Solo tiene
+	// efecto en acciones SELECT; para INSERT/UPDATE/DELETE se ignora.
+	Operator Operator `json:"operator,omitempty"`
+	// MatchType es el valor LEGADO de lectura ("exact"|"partial") de definiciones
+	// persistidas antes de Operator. La UI ya no lo emite. Ver EffectiveOperator.
 	MatchType string `json:"matchType,omitempty"`
 	// Strategy es, cuando Source == "fillStrategy", la estrategia de llenado que
 	// el motor usa para resolver el valor de la columna destino. Un campo con ese
@@ -285,6 +287,19 @@ type FieldSpec struct {
 	// CaptureKeyPrefix; es el camino EXPLÍCITO que la UI puede marcar sin
 	// depender del prefijo del Name. Ver IsCaptureOnly. omitempty ⇒ retrocompat.
 	CaptureOnly bool `json:"captureOnly,omitempty"`
+}
+
+// EffectiveOperator devuelve el operador de comparación del filtro: Operator si
+// está declarado; si no, "contains" para el MatchType legado "partial" y "eq" en
+// cualquier otro caso (incluye ausente y valores no reconocidos).
+func (f FieldSpec) EffectiveOperator() Operator {
+	if f.Operator != "" {
+		return f.Operator
+	}
+	if f.MatchType == SearchMatchPartial {
+		return OpContains
+	}
+	return OpEq
 }
 
 // IsCaptureOnly indica si el campo es de SOLO CAPTURA (no escribe columna de la
@@ -354,20 +369,20 @@ type DataSource struct {
 }
 
 // ListCondition es una condición fija de listado: solo pasan las filas cuya
-// columna `Field` tiene un valor que coincide (exacto, sin distinguir
-// mayúsculas) con alguno de `Values`. Varias condiciones se combinan con AND.
+// columna `Field` cumple `Operator` contra `Values` (sin distinguir
+// mayúsculas). Operator ausente ⇒ "in" (coincide con alguno de Values). Varias
+// condiciones se combinan con AND.
 //
 // El filtrado se aplica 100% EN SQL vía engine.buildListConditionsWhere, con la
 // MISMA cláusula WHERE y argumentos ligados para el COUNT(*) y el SELECT de
 // datos (paginación consistente). En módulos MULTI-TABLA cada condición se
-// cualifica por su tabla (lower(btrim("<tabla>"."<col>"::text)) IN (...)).
-// engine.applyConditions/rowMeetsAll (internal/engine/mapping.go) quedan
-// INACTIVOS (no se invocan en el camino en vivo) y NO deben reintroducirse sobre
-// filas aliased <tabla>__<col> (indexan por nombre PELADO y descartarían todas
-// las filas).
+// cualifica por su tabla (lower(btrim("<tabla>"."<col>"::text)) IN (...)). No
+// existe evaluación en memoria de condiciones.
 type ListCondition struct {
-	Field  string   `json:"field"`
-	Values []string `json:"values"`
+	Field string `json:"field"`
+	// Operator es el operador de comparación. Ausente ⇒ OpIn.
+	Operator Operator `json:"operator,omitempty"`
+	Values   []string `json:"values"`
 	// SourceTable es, en módulos MULTI-TABLA, la tabla de la columna `Field`
 	// cuando el nombre es homónimo entre tablas. Ausente ⇒ la principal (o la
 	// única tabla que declara esa columna). Si la columna es homónima y no se

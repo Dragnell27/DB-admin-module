@@ -171,7 +171,7 @@ func (h *ModulesHandler) writeDefError(c *gin.Context, err error) {
 		writeError(c, http.StatusUnprocessableEntity, "E422_VALIDATION", "El módulo debe referenciar una plantilla de conexión existente")
 	case errors.Is(err, modules.ErrNoPrimaryKey):
 		writeError(c, http.StatusUnprocessableEntity, "E422_VALIDATION", "Marca al menos una columna como llave primaria para las acciones de editar o eliminar")
-	case errors.Is(err, modules.ErrMultiTableValidation):
+	case errors.Is(err, modules.ErrMultiTableValidation), errors.Is(err, modules.ErrInvalidCondition):
 		writeError(c, http.StatusUnprocessableEntity, "E422_VALIDATION", err.Error())
 	default:
 		writeError(c, http.StatusInternalServerError, "E500", "No se pudo procesar el módulo")
@@ -239,6 +239,8 @@ func (h *ModulesHandler) List(c *gin.Context) {
 			// en la búsqueda del usuario; el origen concreto queda solo en logs.
 			writeError(c, http.StatusUnprocessableEntity, "E422_PG_WHITELIST",
 				"La solicitud referencia tablas o columnas no permitidas")
+		case errors.Is(err, engine.ErrValidation):
+			writeError(c, http.StatusUnprocessableEntity, "E422_VALIDATION", err.Error())
 		default:
 			writeError(c, http.StatusBadGateway, "E502",
 				"El origen del módulo no respondió correctamente: "+err.Error())
@@ -570,6 +572,8 @@ func (h *ModulesHandler) ExecActionList(c *gin.Context) {
 			// Mensaje NEUTRO (igual que List): el origen concreto queda solo en logs.
 			writeError(c, http.StatusUnprocessableEntity, "E422_PG_WHITELIST",
 				"La solicitud referencia tablas o columnas no permitidas")
+		case errors.Is(err, engine.ErrValidation):
+			writeError(c, http.StatusUnprocessableEntity, "E422_VALIDATION", err.Error())
 		default:
 			writeError(c, http.StatusBadGateway, "E502",
 				"El origen del módulo no respondió correctamente: "+err.Error())

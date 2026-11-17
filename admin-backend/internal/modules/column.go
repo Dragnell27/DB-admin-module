@@ -23,16 +23,11 @@ var ErrNoPrimaryKey = errors.New("modules: define al menos una columna como llav
 // EDITABLES, cuyos valores sí teclea el usuario en el formulario (R12.1/R12.2).
 const FieldTypeKeyPassthrough = "keyPassthrough"
 
-// SearchMatchExact y SearchMatchPartial son los dos tipos de coincidencia de un
-// campo de una ACCIÓN SELECT (filtro de listado): "exact" (col = $n) o "partial"
-// (col LIKE $n). Se declaran como constantes para no interpolar literales
-// sueltos: el builder del WHERE de filtro (buildActionFilterWhere) solo conoce
-// estas dos ramas y cualquier otro valor cae al default "exact" (nunca se
-// interpola).
-const (
-	SearchMatchExact   = "exact"
-	SearchMatchPartial = "partial"
-)
+// SearchMatchPartial es el valor LEGADO de FieldSpec.MatchType de una acción
+// SELECT que se conserva solo para leer definiciones ya persistidas: equivale al
+// operador "contains". Cualquier otro valor de MatchType equivale a "eq". Las
+// definiciones nuevas declaran FieldSpec.Operator.
+const SearchMatchPartial = "partial"
 
 // DisplayColumn describe una columna de la tabla del módulo (paso
 // «Visualización»): el campo de origen, su etiqueta, orden y formato de

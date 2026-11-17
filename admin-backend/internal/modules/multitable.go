@@ -34,13 +34,35 @@ type JoinPair struct {
 }
 
 // JoinConstant es una condición extra del ON que compara una columna de UNA de
-// las dos tablas de la relación contra un valor CONSTANTE. El valor viaja SIEMPRE
-// como parámetro ligado ($N); NUNCA se interpola. Table debe ser ChildTable o
-// ParentTable de la relación.
+// las dos tablas de la relación contra un valor CONSTANTE según Operator. El
+// valor viaja SIEMPRE como parámetro ligado ($N); NUNCA se interpola. Table debe
+// ser ChildTable o ParentTable de la relación.
 type JoinConstant struct {
 	Table  string `json:"table"`  // ChildTable o ParentTable de la relación
 	Column string `json:"column"` // columna en Table (whitelisteada)
-	Value  string `json:"value"`  // literal; se liga como $N (Postgres coacciona el tipo)
+	Value  string `json:"value"`  // literal de eq/neq/like y legado; se liga como $N (Postgres coacciona el tipo)
+	// Operator es el operador de comparación. Ausente ⇒ OpEq.
+	Operator Operator `json:"operator,omitempty"`
+	// Values son los literales de in/not_in (Value debe quedar vacío).
+	Values []string `json:"values,omitempty"`
+}
+
+// OperatorValues devuelve el operador efectivo (OpEq si está ausente) y los
+// valores que deben pasarse al builder: Values para in/not_in, ninguno para
+// is_null/is_not_null y [Value] para el resto.
+func (j JoinConstant) OperatorValues() (Operator, []string) {
+	op := j.Operator
+	if op == "" {
+		op = OpEq
+	}
+	switch op {
+	case OpIn, OpNotIn:
+		return op, j.Values
+	case OpIsNull, OpIsNotNull:
+		return op, nil
+	default:
+		return op, []string{j.Value}
+	}
 }
 
 // Relationship declara UN JOIN manual DIRIGIDO entre dos tablas. Por convención
@@ -57,7 +79,7 @@ type Relationship struct {
 	// On empareja columnas: On[i].Child (FK en ChildTable) = On[i].Parent (clave
 	// en ParentTable).
 	On []JoinPair `json:"on"`
-	// OnConstants son condiciones extra "<tabla>.<col> = $N" del ON, ANDed con los
+	// OnConstants son condiciones extra "<tabla>.<col> <operador> $N" del ON, ANDed con los
 	// pares On[]. Opcional y omitempty: una definición sin él se comporta como hoy.
 	OnConstants []JoinConstant `json:"onConstants,omitempty"`
 	// JoinType es "inner"|"left" en v1.
