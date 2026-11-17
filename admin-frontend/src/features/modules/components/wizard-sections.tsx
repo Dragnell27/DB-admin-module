@@ -2325,10 +2325,14 @@ export function ActionsSection({ state, patch }: SectionProps) {
               </div>
             ) : null}
 
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={a.destructive} onChange={(e) => updateAction(ai, { destructive: e.target.checked })} className="size-4" />
-              Acción destructiva (pide confirmación)
-            </label>
+            <SwitchField
+              id={`w_act_destructive_${ai}`}
+              label="Acción destructiva"
+              title="Acción destructiva (pide confirmación)"
+              tone="accent"
+              checked={a.destructive}
+              onCheckedChange={(v) => updateAction(ai, { destructive: v })}
+            />
 
             {/* Campos de entrada */}
             <div className="space-y-2 rounded-md border border-border p-3">
@@ -2432,7 +2436,7 @@ function ActionFieldRow({
       }
       panelClassName="space-y-2"
     >
-                  <div className="grid items-end gap-2 sm:grid-cols-[1fr_1fr_auto]">
+                  <div className="grid items-end gap-2 sm:grid-cols-2">
                     <div className="space-y-1">
                       {captureOnly ? (
                         // Campo solo-captura: no hay columna objetivo; el `name` es
@@ -2517,14 +2521,29 @@ function ActionFieldRow({
                         <option value="date">Fecha</option>
                       </select>
                     </div>
-                    <label className="flex items-center gap-1 pb-2 text-xs">
-                      <input type="checkbox" checked={f.required} onChange={(e) => onUpdateField({ required: e.target.checked })} className="size-4" />
-                      Oblig.
-                    </label>
                   </div>
 
-                  {/* MEJORA 3 + 4: etiqueta visible del formulario de ejecución y
-                      marca de campo auxiliar de solo captura (no escribe columna). */}
+                  <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+                    <SwitchField
+                      id={`${panelId}_required`}
+                      label="Obligatorio"
+                      title="Obligatorio"
+                      tone="primary"
+                      checked={f.required}
+                      onCheckedChange={(v) => onUpdateField({ required: v })}
+                    />
+                    <SwitchField
+                      id={`${panelId}_capture_only`}
+                      label="Solo captura"
+                      title="Campo auxiliar: solo captura (no escribe a columna)"
+                      tone="accent"
+                      checked={captureOnly}
+                      onCheckedChange={(v) => onUpdateField({ captureOnly: v })}
+                    />
+                  </div>
+
+                  {/* MEJORA 3: etiqueta visible del formulario de ejecución. La
+                      marca de solo captura (MEJORA 4) vive en la fila de switches. */}
                   <div className="grid items-start gap-2 sm:grid-cols-2">
                     <div className="space-y-1">
                       <Label htmlFor={`${panelId}_label`}>Etiqueta a mostrar (opcional)</Label>
@@ -2536,15 +2555,6 @@ function ActionFieldRow({
                         onChange={(e) => onUpdateField({ label: e.target.value })}
                       />
                     </div>
-                    <label className="flex items-start gap-2 pt-6 text-xs">
-                      <input
-                        type="checkbox"
-                        checked={captureOnly}
-                        onChange={(e) => onUpdateField({ captureOnly: e.target.checked })}
-                        className="mt-0.5 size-4"
-                      />
-                      <span>Campo auxiliar: solo captura (no escribe a columna)</span>
-                    </label>
                   </div>
 
                   {/* Origen del valor: capturado del usuario, tomado de la fila
@@ -2607,15 +2617,14 @@ function ActionFieldRow({
                         {/* Solo para escrituras: ocultar la columna del formulario
                             (flujo "Inactivar"). Su valor lo fija el backend. */}
                         {isWriteColumnAction(a) ? (
-                          <label className="flex items-center gap-1 pt-1 text-xs">
-                            <input
-                              type="checkbox"
-                              checked={f.hidden}
-                              onChange={(e) => onUpdateField({ hidden: e.target.checked })}
-                              className="size-4"
-                            />
-                            Ocultar en el formulario
-                          </label>
+                          <SwitchField
+                            id={`${panelId}_hidden`}
+                            label="Ocultar en el formulario"
+                            title="Ocultar en el formulario"
+                            tone="primary"
+                            checked={f.hidden}
+                            onCheckedChange={(v) => onUpdateField({ hidden: v })}
+                          />
                         ) : null}
                       </div>
                     ) : null}
