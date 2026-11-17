@@ -94,25 +94,6 @@ func (e *PGExecutor) resolveAuxLabels(ctx context.Context, def modules.Definitio
 // cualquier identificador fuera de lista aborta con ErrWhitelist (el llamador
 // degrada al id). Devuelve map[idTexto]etiqueta; ids sin fila quedan ausentes.
 func auxLabelsForColumn(ctx context.Context, db *sql.DB, whitelist map[string][]string, src *modules.DynamicSource, rows []map[string]any, rowKey string) (map[string]any, error) {
-	if src == nil {
-		return nil, fmt.Errorf("%w: la columna dinámica no declara catálogo", ErrValidation)
-	}
-	if strings.TrimSpace(src.Table) == "" ||
-		strings.TrimSpace(src.IDColumn) == "" ||
-		strings.TrimSpace(src.LabelColumn) == "" {
-		return nil, fmt.Errorf("%w: el origen dinámico requiere tabla, columna id y columna etiqueta", ErrValidation)
-	}
-	// Tabla y columnas id/etiqueta en la lista blanca.
-	if err := checkTable(whitelist, src.Table); err != nil {
-		return nil, err
-	}
-	if err := checkColumnWhitelisted(whitelist, src.Table, src.IDColumn); err != nil {
-		return nil, err
-	}
-	if err := checkColumnWhitelisted(whitelist, src.Table, src.LabelColumn); err != nil {
-		return nil, err
-	}
-
 	// Ids DISTINTOS de la página, en orden de aparición (orden de $N estable).
 	ids := make([]any, 0, len(rows))
 	seen := make(map[string]struct{}, len(rows))
@@ -128,35 +109,14 @@ func auxLabelsForColumn(ctx context.Context, db *sql.DB, whitelist map[string][]
 		seen[k] = struct{}{}
 		ids = append(ids, raw)
 	}
-	if len(ids) == 0 {
-		return nil, nil
-	}
 
-	// Marcadores IN ($1..$k) para los ids; los filtros del catálogo se numeran
-	// DESPUÉS ($k+1..). Cada valor viaja ligado; nunca se interpola.
-	placeholders := make([]string, len(ids))
-	args := make([]any, 0, len(ids))
-	for i := range ids {
-		placeholders[i] = fmt.Sprintf("$%d", i+1)
-		args = append(args, ids[i])
-	}
-
-	condClause, condArgs, err := buildListConditionsWhere(whitelist, src.Table, src.Filters, len(ids)+1)
+	query, args, err := buildAuxLabelsSQL(whitelist, src, ids)
 	if err != nil {
 		return nil, err
 	}
-
-	whereSQL := fmt.Sprintf("%s IN (%s)", quoteIdent(src.IDColumn), strings.Join(placeholders, ", "))
-	if condClause != "" {
-		whereSQL += " AND " + condClause
+	if query == "" {
+		return nil, nil // sin ids en la página
 	}
-	args = append(args, condArgs...)
-
-	query := fmt.Sprintf(
-		"SELECT %s FROM %s WHERE %s LIMIT %d",
-		joinQuotedIdents([]string{src.IDColumn, src.LabelColumn}),
-		quoteIdent(src.Table), whereSQL, DefaultOptionsLimit,
-	)
 
 	dbRows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -176,6 +136,63 @@ func auxLabelsForColumn(ctx context.Context, db *sql.DB, whitelist map[string][]
 		return nil, fmt.Errorf("engine: error iterando etiquetas auxiliares: %w", err)
 	}
 	return out, nil
+}
+
+// buildAuxLabelsSQL compone la query de lookup en LOTE de una columna dinámica
+// para los ids dados: valida la tabla y las columnas id/etiqueta/filtro contra la
+// lista blanca (ErrWhitelist) y arma "SELECT <idCol>,<labelCol> FROM <tabla> WHERE
+// <idCol> IN ($1..$k) [AND filtros] LIMIT <DefaultOptionsLimit>". Los filtros del
+// catálogo pasan por buildListConditionsWhere, numerados desde $k+1. Sin ids
+// devuelve query vacía.
+func buildAuxLabelsSQL(whitelist map[string][]string, src *modules.DynamicSource, ids []any) (string, []any, error) {
+	if src == nil {
+		return "", nil, fmt.Errorf("%w: la columna dinámica no declara catálogo", ErrValidation)
+	}
+	if strings.TrimSpace(src.Table) == "" ||
+		strings.TrimSpace(src.IDColumn) == "" ||
+		strings.TrimSpace(src.LabelColumn) == "" {
+		return "", nil, fmt.Errorf("%w: el origen dinámico requiere tabla, columna id y columna etiqueta", ErrValidation)
+	}
+	// Tabla y columnas id/etiqueta en la lista blanca.
+	if err := checkTable(whitelist, src.Table); err != nil {
+		return "", nil, err
+	}
+	if err := checkColumnWhitelisted(whitelist, src.Table, src.IDColumn); err != nil {
+		return "", nil, err
+	}
+	if err := checkColumnWhitelisted(whitelist, src.Table, src.LabelColumn); err != nil {
+		return "", nil, err
+	}
+	if len(ids) == 0 {
+		return "", nil, nil
+	}
+
+	// Marcadores IN ($1..$k) para los ids; los filtros del catálogo se numeran
+	// DESPUÉS ($k+1..). Cada valor viaja ligado; nunca se interpola.
+	placeholders := make([]string, len(ids))
+	args := make([]any, 0, len(ids))
+	for i := range ids {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args = append(args, ids[i])
+	}
+
+	condClause, condArgs, err := buildListConditionsWhere(whitelist, src.Table, src.Filters, len(ids)+1)
+	if err != nil {
+		return "", nil, err
+	}
+
+	whereSQL := fmt.Sprintf("%s IN (%s)", quoteIdent(src.IDColumn), strings.Join(placeholders, ", "))
+	if condClause != "" {
+		whereSQL += " AND " + condClause
+	}
+	args = append(args, condArgs...)
+
+	query := fmt.Sprintf(
+		"SELECT %s FROM %s WHERE %s LIMIT %d",
+		joinQuotedIdents([]string{src.IDColumn, src.LabelColumn}),
+		quoteIdent(src.Table), whereSQL, DefaultOptionsLimit,
+	)
+	return query, args, nil
 }
 
 // auxIDKey normaliza un id (de la fila o de la relectura del catálogo) a una

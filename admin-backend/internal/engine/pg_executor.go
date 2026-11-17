@@ -316,10 +316,9 @@ func mergeWhereClauses(static, search string) string {
 // cualificada "tabla"."col") y valida la columna contra la lista blanca de esa
 // tabla con checkColumnWhitelisted; fuera de lista ⇒ ErrWhitelist SIN producir
 // SQL. Si el valor en input[f.Name] es vacío/solo-espacios ⇒ se OMITE (sin
-// predicado). exact (y cualquier MatchType no reconocido) ⇒
-// lower(btrim(col::text)) = $n con arg lower+trim; partial ⇒
-// lower(col::text) LIKE '%' || lower($n) || '%' con arg solo-trim (los comodines
-// '%' son literales SQL, NUNCA interpolados ni parte del valor). Los fragmentos
+// predicado). El predicado lo compone buildPredicate según
+// f.EffectiveOperator() (Operator, o el MatchType legado: partial ⇒ contains,
+// resto ⇒ eq); el valor SIEMPRE viaja como parámetro ligado $N. Los fragmentos
 // se unen con ' AND '; sin fragmentos ⇒ ("", nil, nil). Numera los $N desde
 // startParam.
 func buildActionFilterWhere(
@@ -367,22 +366,35 @@ func buildActionFilterWhere(
 			col = quoteIdent(f.Name)
 		}
 
-		// Co-emisión (fragmento SQL, arg). El valor SIEMPRE viaja como parámetro
-		// ligado $N; los comodines '%' son literales SQL concatenados.
-		switch f.MatchType {
-		case modules.SearchMatchPartial:
-			// Insensible a mayúsculas en ambos lados vía lower(); el arg va sin
-			// pre-lower en Go (lo normaliza el lower($N) de SQL).
-			fragments = append(fragments, fmt.Sprintf("lower(%s::text) LIKE '%%' || lower($%d) || '%%'", col, n))
-			args = append(args, strings.TrimSpace(raw))
+		// Valores del usuario según el operador: in/not_in parten por comas
+		// (TrimSpace, sin vacíos; si no queda ninguno el campo se omite); is_null/
+		// is_not_null no usan el texto (el campo lleno actúa de interruptor);
+		// el resto usa el texto completo como un solo valor.
+		op := f.EffectiveOperator()
+		var values []string
+		switch op {
+		case modules.OpIn, modules.OpNotIn:
+			for _, part := range strings.Split(raw, ",") {
+				if p := strings.TrimSpace(part); p != "" {
+					values = append(values, p)
+				}
+			}
+			if len(values) == 0 {
+				continue
+			}
+		case modules.OpIsNull, modules.OpIsNotNull:
+			// sin valores
 		default:
-			// "exact" (y cualquier valor no reconocido): misma normalización
-			// lower+btrim que las condiciones de listado; el arg llega ya en
-			// minúsculas desde Go.
-			fragments = append(fragments, fmt.Sprintf("lower(btrim(%s::text)) = $%d", col, n))
-			args = append(args, strings.ToLower(strings.TrimSpace(raw)))
+			values = []string{raw}
 		}
-		n++
+
+		frag, a, next, err := buildPredicate(op, col, values, n, modeText, f.Operator != "")
+		if err != nil {
+			return "", nil, err
+		}
+		fragments = append(fragments, frag)
+		args = append(args, a...)
+		n = next
 	}
 
 	// Sin fragmentos ⇒ sin WHERE de filtro (el GET /list base queda idéntico).
@@ -524,8 +536,9 @@ func resolveConditionTable(cond modules.ListCondition, cols []modules.ResolvedCo
 // componer. La dirección FK solo decide qué columna va a cada lado del ON.
 //
 // Además de los pares columna=columna (On[]), cada relación puede llevar
-// condiciones constantes (OnConstants[]) "<tabla>.<col> = $N" cuyo valor se liga
-// como parámetro (NUNCA se interpola). Esos parámetros se numeran desde
+// condiciones constantes (OnConstants[]) "<tabla>.<col> <operador> $N" (por
+// defecto "="; ver buildPredicate en modo raw) cuyos valores se ligan como
+// parámetros (NUNCA se interpolan). Esos parámetros se numeran desde
 // startParam y se devuelven en args en el orden estable de emisión de los JOIN,
 // de modo que SELECT de datos y COUNT compartan los mismos $N. Devuelve el FROM,
 // los args del ON y el error.
@@ -615,10 +628,15 @@ func buildJoinClause(whitelist map[string][]string, spec modules.MultiTableSpec,
 					if err := allowed(jc.Table, jc.Column); err != nil {
 						return "", nil, err
 					}
-					onParts = append(onParts, fmt.Sprintf("%s.%s = $%d",
-						quoteIdent(jc.Table), quoteIdent(jc.Column), n))
-					args = append(args, jc.Value) // valor ligado; Postgres coacciona string→numérico/texto
-					n++
+					op, values := jc.OperatorValues()
+					qualified := quoteIdent(jc.Table) + "." + quoteIdent(jc.Column)
+					frag, a, nextN, err := buildPredicate(op, qualified, values, n, modeRaw, jc.Operator != "")
+					if err != nil {
+						return "", nil, err
+					}
+					onParts = append(onParts, frag)
+					args = append(args, a...) // valores ligados; Postgres coacciona string→numérico/texto
+					n = nextN
 				}
 				sb.WriteString(" ")
 				sb.WriteString(joinKw)
@@ -1640,9 +1658,8 @@ func reloadCatalogRow(ctx context.Context, tx txExecer, whitelist map[string][]s
 
 // selectColumns calcula las columnas a traer en el SELECT de la Acción Listar:
 // la UNIÓN de las columnas de visualización (lista blanca de la tabla) con las
-// columnas referenciadas por las condiciones de listado. Así applyConditions
-// puede evaluar columnas que no se muestran (p. ej. "eliminado") sin que la
-// fila se descarte por falta de la clave.
+// columnas referenciadas por las condiciones de listado, que se validan contra la
+// lista blanca aunque no se muestren (p. ej. "eliminado").
 //
 // VALIDACIÓN DE SEGURIDAD: cada columna de condición DEBE estar en la lista
 // blanca de la tabla; si no lo está, aborta con un error que envuelve
@@ -1682,15 +1699,57 @@ func selectColumns(whitelist map[string][]string, table string, conditions []mod
 	return out, nil
 }
 
+// colResolver devuelve la expresión de columna (ya entrecomillada y/o
+// cualificada) de una condición, tras validarla contra la lista blanca de su
+// tabla. Un fallo (ErrWhitelist) aborta sin producir SQL.
+type colResolver func(cond modules.ListCondition) (string, error)
+
+// buildConditionsWhere es el recorrido común de las condiciones de listado: por
+// cada condición con Field, resuelve el operador (ausente ⇒ "in"), la columna
+// (lista blanca) y compone su predicado con buildPredicate. Las condiciones sin
+// operador y sin Values se saltan (legado); con operador explícito la aridad la
+// valida buildPredicate. Se unen con AND y los $N se numeran desde startParam.
+func buildConditionsWhere(conditions []modules.ListCondition, startParam int, resolve colResolver) (string, []any, error) {
+	fragments := make([]string, 0, len(conditions))
+	args := make([]any, 0)
+	n := startParam
+	for _, cond := range conditions {
+		if cond.Field == "" {
+			continue
+		}
+		op, err := cond.Operator.Resolve(modules.OpIn)
+		if err != nil {
+			return "", nil, fmt.Errorf("%w: %v", ErrValidation, err)
+		}
+		if cond.Operator == "" && len(cond.Values) == 0 {
+			continue // legado: sin operador ni valores no restringe
+		}
+		colExpr, err := resolve(cond)
+		if err != nil {
+			return "", nil, err
+		}
+		frag, a, next, err := buildPredicate(op, colExpr, cond.Values, n, modeText, cond.Operator != "")
+		if err != nil {
+			return "", nil, err
+		}
+		fragments = append(fragments, frag)
+		args = append(args, a...)
+		n = next
+	}
+
+	if len(fragments) == 0 {
+		return "", nil, nil
+	}
+	return strings.Join(fragments, " AND "), args, nil
+}
+
 // buildListConditionsWhere compone UNA cláusula WHERE parametrizada a partir de
 // las condiciones fijas de listado del módulo, para aplicarla por igual al
-// SELECT de datos y al COUNT(*). Reproduce EXACTAMENTE la semántica en memoria
-// de rowMeetsAll: por cada condición con Values no vacío, el valor de la columna
-// debe coincidir (texto, sin distinguir mayúsculas, recortado) con ALGUNO de los
-// valores permitidos (OR dentro de la columna ⇒ IN); las condiciones distintas
-// se combinan con AND. Las condiciones con Field vacío o Values vacío se saltan
-// (igual que rowMeetsAll). El SQL emitido es lower(btrim(<col>::text)) IN (...)
-// y cada valor viaja como parámetro ligado, normalizado con el MISMO lower+trim.
+// SELECT de datos y al COUNT(*). Cada condición se compara según su operador
+// (ausente ⇒ "in": lower(btrim(<col>::text)) IN (...)); las condiciones distintas
+// se combinan con AND. Es el ÚNICO punto de entrada de filtros de catálogo:
+// buildOptionsSQL, buildRowLookupSQL y buildAuxLabelsSQL lo usan, de modo que
+// opciones, relectura y etiquetas auxiliares aplican siempre el mismo filtro.
 //
 // VALIDACIÓN DE SEGURIDAD: cada columna de condición DEBE estar en la lista
 // blanca de la tabla; si no lo está, aborta con un error que envuelve
@@ -1701,83 +1760,40 @@ func selectColumns(whitelist map[string][]string, table string, conditions []mod
 // de datos pueda renumerar LIMIT/OFFSET DESPUÉS de los parámetros del WHERE.
 // Devuelve clause vacío y args nil cuando no se emite ninguna condición.
 func buildListConditionsWhere(whitelist map[string][]string, table string, conditions []modules.ListCondition, startParam int) (string, []any, error) {
-	allowedSet := make(map[string]struct{}, len(whitelist[table]))
-	for _, c := range whitelist[table] {
-		allowedSet[c] = struct{}{}
-	}
-
-	fragments := make([]string, 0, len(conditions))
-	args := make([]any, 0)
-	n := startParam
-	for _, cond := range conditions {
-		col := cond.Field
-		if col == "" || len(cond.Values) == 0 {
-			continue // sin campo o sin valores: no restringe (paridad con rowMeetsAll)
+	return buildConditionsWhere(conditions, startParam, func(cond modules.ListCondition) (string, error) {
+		if err := checkConditionColumn(whitelist, table, cond.Field); err != nil {
+			return "", err
 		}
-		if _, ok := allowedSet[col]; !ok {
-			return "", nil, fmt.Errorf("%w: columna de condición %q en la tabla %q", ErrWhitelist, col, table)
-		}
-		placeholders := make([]string, len(cond.Values))
-		for i, v := range cond.Values {
-			placeholders[i] = fmt.Sprintf("$%d", n)
-			args = append(args, strings.ToLower(strings.TrimSpace(v)))
-			n++
-		}
-		fragments = append(fragments, fmt.Sprintf(
-			"lower(btrim(%s::text)) IN (%s)",
-			quoteIdent(col), strings.Join(placeholders, ", "),
-		))
-	}
-
-	if len(fragments) == 0 {
-		return "", nil, nil
-	}
-	return strings.Join(fragments, " AND "), args, nil
+		return quoteIdent(cond.Field), nil
+	})
 }
 
 // buildListConditionsWhereMulti es la versión multi-tabla de
 // buildListConditionsWhere: cualifica cada condición por su tabla
 // (lower(btrim("<tabla>"."<col>"::text)) IN (...)). Resuelve la tabla con
 // resolveConditionTable y valida cada columna contra la lista blanca de su
-// tabla. Comparte la misma semántica (lower+trim, IN, AND entre condiciones) y
-// la misma numeración de parámetros desde startParam que el camino N=1, de modo
-// que el COUNT y el SELECT de datos usen el mismo WHERE y args.
+// tabla. Comparte la semántica por operador y la numeración de parámetros desde
+// startParam del camino N=1, de modo que el COUNT y el SELECT de datos usen el
+// mismo WHERE y args.
 func buildListConditionsWhereMulti(whitelist map[string][]string, cols []modules.ResolvedColumn, spec modules.MultiTableSpec, conditions []modules.ListCondition, startParam int) (string, []any, error) {
-	allowedSet := func(table string) map[string]struct{} {
-		set := make(map[string]struct{}, len(whitelist[table]))
-		for _, c := range whitelist[table] {
-			set[c] = struct{}{}
-		}
-		return set
-	}
-
-	fragments := make([]string, 0, len(conditions))
-	args := make([]any, 0)
-	n := startParam
-	for _, cond := range conditions {
-		if cond.Field == "" || len(cond.Values) == 0 {
-			continue
-		}
+	return buildConditionsWhere(conditions, startParam, func(cond modules.ListCondition) (string, error) {
 		table := resolveConditionTable(cond, cols, spec)
-		if _, ok := allowedSet(table)[cond.Field]; !ok {
-			return "", nil, fmt.Errorf("%w: columna de condición %q en la tabla %q", ErrWhitelist, cond.Field, table)
+		if err := checkConditionColumn(whitelist, table, cond.Field); err != nil {
+			return "", err
 		}
-		placeholders := make([]string, len(cond.Values))
-		for i, v := range cond.Values {
-			placeholders[i] = fmt.Sprintf("$%d", n)
-			args = append(args, strings.ToLower(strings.TrimSpace(v)))
-			n++
-		}
-		fragments = append(fragments, fmt.Sprintf(
-			"lower(btrim(%s.%s::text)) IN (%s)",
-			quoteIdent(table), quoteIdent(cond.Field), strings.Join(placeholders, ", "),
-		))
-	}
+		return quoteIdent(table) + "." + quoteIdent(cond.Field), nil
+	})
+}
 
-	if len(fragments) == 0 {
-		return "", nil, nil
+// checkConditionColumn valida que la columna de una condición esté en la lista
+// blanca de su tabla; si no, devuelve ErrWhitelist.
+func checkConditionColumn(whitelist map[string][]string, table, column string) error {
+	for _, c := range whitelist[table] {
+		if c == column {
+			return nil
+		}
 	}
-	return strings.Join(fragments, " AND "), args, nil
+	return fmt.Errorf("%w: columna de condición %q en la tabla %q", ErrWhitelist, column, table)
 }
 
 // quoteIdent entrecomilla un identificador SQL de forma segura, duplicando las

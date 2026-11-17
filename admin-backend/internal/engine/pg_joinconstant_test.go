@@ -241,3 +241,106 @@ func TestBuildListSQL_FourTableLeftJoinWithConstant(t *testing.T) {
 		t.Fatalf("el valor 10001 debe ir ligado como $1: %v", condArgs)
 	}
 }
+
+// onConstantSpec devuelve la spec con las constantes dadas en el ON (pagos ← clientes).
+func onConstantSpec(consts ...map[string]any) (map[string][]string, modules.MultiTableSpec) {
+	def := defMultiConstant()
+	list := make([]any, len(consts))
+	for i, c := range consts {
+		list[i] = c
+	}
+	def.FetchMapping["relationships"] = []any{
+		map[string]any{
+			"childTable":  "pagos",
+			"parentTable": "clientes",
+			"on":          []any{map[string]any{"child": "cliente_id", "parent": "id"}},
+			"onConstants": list,
+			"joinType":    "left",
+		},
+	}
+	return def.DataSource.PGWhitelist, modules.MultiTableFromFetchMapping(def.FetchMapping)
+}
+
+// Cada operador en las constantes del ON: SQL (modo raw) y args exactos, con $N
+// correlativos tras otras constantes y los pares ON intactos.
+func TestBuildJoinClause_OnConstantOperators(t *testing.T) {
+	const base = `LEFT JOIN "clientes" ON "pagos"."cliente_id" = "clientes"."id"`
+	c := func(extra map[string]any) map[string]any {
+		m := map[string]any{"table": "clientes", "column": "estado", "value": ""}
+		for k, v := range extra {
+			m[k] = v
+		}
+		return m
+	}
+	cases := []struct {
+		name     string
+		consts   []map[string]any
+		wantTail string
+		wantArgs []any
+	}{
+		{"sin operador ⇒ =", []map[string]any{c(map[string]any{"value": "1"})}, ` AND "clientes"."estado" = $1`, []any{"1"}},
+		{"Value vacío sin operador ⇒ = con arg vacío", []map[string]any{c(nil)}, ` AND "clientes"."estado" = $1`, []any{""}},
+		{"eq", []map[string]any{c(map[string]any{"operator": "eq", "value": "1"})}, ` AND "clientes"."estado" = $1`, []any{"1"}},
+		{"neq", []map[string]any{c(map[string]any{"operator": "neq", "value": "1"})}, ` AND "clientes"."estado" <> $1`, []any{"1"}},
+		{"in", []map[string]any{c(map[string]any{"operator": "in", "values": []any{"10001", "10002"}})}, ` AND "clientes"."estado" IN ($1, $2)`, []any{"10001", "10002"}},
+		{"not_in", []map[string]any{c(map[string]any{"operator": "not_in", "values": []any{"1"}})}, ` AND "clientes"."estado" NOT IN ($1)`, []any{"1"}},
+		{"contains", []map[string]any{c(map[string]any{"operator": "contains", "value": "a%"})}, ` AND "clientes"."estado"::text ILIKE $1 ESCAPE '\'`, []any{`%a\%%`}},
+		{"is_null", []map[string]any{c(map[string]any{"operator": "is_null"})}, ` AND "clientes"."estado" IS NULL`, nil},
+		{"is_not_null", []map[string]any{c(map[string]any{"operator": "is_not_null"})}, ` AND "clientes"."estado" IS NOT NULL`, nil},
+		{"correlativos tras otras constantes", []map[string]any{
+			c(map[string]any{"value": "1"}),
+			c(map[string]any{"column": "nombre", "operator": "is_null"}),
+			c(map[string]any{"operator": "in", "values": []any{"a", "b"}}),
+		}, ` AND "clientes"."estado" = $1 AND "clientes"."nombre" IS NULL AND "clientes"."estado" IN ($2, $3)`, []any{"1", "a", "b"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wl, spec := onConstantSpec(tc.consts...)
+			from, args, err := buildJoinClause(wl, spec, 1)
+			if err != nil {
+				t.Fatalf("error inesperado: %v", err)
+			}
+			if !strings.HasSuffix(from, base+tc.wantTail) {
+				t.Fatalf("from\n  got:  %s\n  want sufijo: %s", from, base+tc.wantTail)
+			}
+			if len(args) != len(tc.wantArgs) {
+				t.Fatalf("args got %v want %v", args, tc.wantArgs)
+			}
+			for i := range args {
+				if args[i] != tc.wantArgs[i] {
+					t.Fatalf("args got %v want %v", args, tc.wantArgs)
+				}
+			}
+		})
+	}
+}
+
+func TestBuildJoinClause_OnConstantOperatorErrors(t *testing.T) {
+	c := func(extra map[string]any) map[string]any {
+		m := map[string]any{"table": "clientes", "column": "estado", "value": ""}
+		for k, v := range extra {
+			m[k] = v
+		}
+		return m
+	}
+	for name, jc := range map[string]map[string]any{
+		"operador desconocido":     c(map[string]any{"operator": "zzz", "value": "1"}),
+		"Value vacío con operador": c(map[string]any{"operator": "eq"}),
+		"in sin valores":           c(map[string]any{"operator": "in"}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			wl, spec := onConstantSpec(jc)
+			from, args, err := buildJoinClause(wl, spec, 1)
+			if name == "is_null con valores" {
+				// OperatorValues ignora Values en nulidad: se emite sin valores.
+				if err != nil {
+					t.Fatalf("no esperaba error: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrValidation) || from != "" || args != nil {
+				t.Fatalf("esperaba ErrValidation sin SQL, got %q %v %v", from, args, err)
+			}
+		})
+	}
+}

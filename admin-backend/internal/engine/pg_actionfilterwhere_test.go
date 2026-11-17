@@ -64,7 +64,7 @@ func TestBuildActionFilterWhere(t *testing.T) {
 		},
 		{
 			name:       "N=1 exact ⇒ lower(btrim(col)) = $N con arg lower+trim",
-			act:        selectAction(modules.FieldSpec{Name: "estado", MatchType: modules.SearchMatchExact}),
+			act:        selectAction(modules.FieldSpec{Name: "estado"}),
 			spec:       n1Spec("medios_pago"),
 			input:      map[string]any{"estado": "  ACTIVO "},
 			startParam: 1,
@@ -72,13 +72,13 @@ func TestBuildActionFilterWhere(t *testing.T) {
 			wantArgs:   []any{"activo"},
 		},
 		{
-			name:       "N=1 partial ⇒ LIKE con comodines literales y arg solo-trim (sin lower en Go)",
+			name:       "N=1 partial (legado) ⇒ ILIKE ESCAPE con patrón escapado en un solo arg",
 			act:        selectAction(modules.FieldSpec{Name: "nombre", MatchType: modules.SearchMatchPartial}),
 			spec:       n1Spec("medios_pago"),
 			input:      map[string]any{"nombre": "  Visa "},
 			startParam: 1,
-			wantClause: `lower("nombre"::text) LIKE '%' || lower($1) || '%'`,
-			wantArgs:   []any{"Visa"},
+			wantClause: `btrim("nombre"::text) ILIKE $1 ESCAPE '\'`,
+			wantArgs:   []any{"%Visa%"},
 		},
 		{
 			name:       "MatchType ausente ⇒ exact por defecto",
@@ -91,7 +91,7 @@ func TestBuildActionFilterWhere(t *testing.T) {
 		},
 		{
 			name:       "startParam desplaza la numeración (continúa tras los estáticos)",
-			act:        selectAction(modules.FieldSpec{Name: "estado", MatchType: modules.SearchMatchExact}),
+			act:        selectAction(modules.FieldSpec{Name: "estado"}),
 			spec:       n1Spec("medios_pago"),
 			input:      map[string]any{"estado": "1"},
 			startParam: 3,
@@ -102,20 +102,20 @@ func TestBuildActionFilterWhere(t *testing.T) {
 			name: "varios campos llenos ⇒ AND en ORDEN DECLARADO de InputFields",
 			act: selectAction(
 				modules.FieldSpec{Name: "nombre", MatchType: modules.SearchMatchPartial},
-				modules.FieldSpec{Name: "estado", MatchType: modules.SearchMatchExact},
+				modules.FieldSpec{Name: "estado"},
 			),
 			spec:       n1Spec("medios_pago"),
 			input:      map[string]any{"estado": "activo", "nombre": "vi"},
 			startParam: 1,
 			// orden DECLARADO: nombre primero, estado después (no alfabético).
-			wantClause: `lower("nombre"::text) LIKE '%' || lower($1) || '%' AND lower(btrim("estado"::text)) = $2`,
-			wantArgs:   []any{"vi", "activo"},
+			wantClause: `btrim("nombre"::text) ILIKE $1 ESCAPE '\' AND lower(btrim("estado"::text)) = $2`,
+			wantArgs:   []any{"%vi%", "activo"},
 		},
 		{
 			name: "campo vacío/solo-espacios se omite (no añade predicado)",
 			act: selectAction(
-				modules.FieldSpec{Name: "estado", MatchType: modules.SearchMatchExact},
-				modules.FieldSpec{Name: "nombre", MatchType: modules.SearchMatchExact},
+				modules.FieldSpec{Name: "estado"},
+				modules.FieldSpec{Name: "nombre"},
 			),
 			spec:       n1Spec("medios_pago"),
 			input:      map[string]any{"estado": "   ", "nombre": "visa"},
@@ -125,7 +125,7 @@ func TestBuildActionFilterWhere(t *testing.T) {
 		},
 		{
 			name:       "campo ausente del input se omite",
-			act:        selectAction(modules.FieldSpec{Name: "estado", MatchType: modules.SearchMatchExact}),
+			act:        selectAction(modules.FieldSpec{Name: "estado"}),
 			spec:       n1Spec("medios_pago"),
 			input:      map[string]any{},
 			startParam: 1,
@@ -134,7 +134,7 @@ func TestBuildActionFilterWhere(t *testing.T) {
 		},
 		{
 			name:       "columna fuera de la lista blanca ⇒ ErrWhitelist sin SQL",
-			act:        selectAction(modules.FieldSpec{Name: "fantasma", MatchType: modules.SearchMatchExact}),
+			act:        selectAction(modules.FieldSpec{Name: "fantasma"}),
 			spec:       n1Spec("medios_pago"),
 			input:      map[string]any{"fantasma": "x"},
 			startParam: 1,
@@ -142,7 +142,7 @@ func TestBuildActionFilterWhere(t *testing.T) {
 		},
 		{
 			name:       "multi-tabla ⇒ fragmento cualificado por f.SourceTable",
-			act:        selectAction(modules.FieldSpec{Name: "estado", SourceTable: "clientes", MatchType: modules.SearchMatchExact}),
+			act:        selectAction(modules.FieldSpec{Name: "estado", SourceTable: "clientes"}),
 			spec:       multiSpec("medios_pago", "clientes"),
 			input:      map[string]any{"estado": "activo"},
 			startParam: 1,
@@ -151,7 +151,7 @@ func TestBuildActionFilterWhere(t *testing.T) {
 		},
 		{
 			name:       "multi-tabla sin SourceTable ⇒ cualifica por la principal",
-			act:        selectAction(modules.FieldSpec{Name: "estado", MatchType: modules.SearchMatchExact}),
+			act:        selectAction(modules.FieldSpec{Name: "estado"}),
 			spec:       multiSpec("medios_pago", "clientes"),
 			input:      map[string]any{"estado": "activo"},
 			startParam: 1,
@@ -197,7 +197,7 @@ func TestBuildActionFilterWhere(t *testing.T) {
 // startParam + len(args) - 1; los comodines '%' NO son parámetros.
 func TestBuildActionFilterWhereNumberingInvariant(t *testing.T) {
 	act := selectAction(
-		modules.FieldSpec{Name: "estado", MatchType: modules.SearchMatchExact},
+		modules.FieldSpec{Name: "estado"},
 		modules.FieldSpec{Name: "nombre", MatchType: modules.SearchMatchPartial},
 	)
 	startParam := 4 // simula 3 args estáticos previos
@@ -241,7 +241,7 @@ func TestBuildListSQL_FilterComposition(t *testing.T) {
 		}},
 	}
 	spec := modules.MultiTableFromFetchMapping(def.FetchMapping)
-	act := selectAction(modules.FieldSpec{Name: "estado", MatchType: modules.SearchMatchExact})
+	act := selectAction(modules.FieldSpec{Name: "estado"})
 	input := map[string]any{"estado": "ACTIVO"}
 
 	parts, _, condArgs, err := buildListSQL(def, spec, act, input)
@@ -304,7 +304,7 @@ func TestBuildListSQL_EmptyActionEquivalentToBase(t *testing.T) {
 	}
 
 	// Acción SELECT con un campo cuyo valor viene vacío ⇒ sin predicado de filtro.
-	act := selectAction(modules.FieldSpec{Name: "estado", MatchType: modules.SearchMatchExact})
+	act := selectAction(modules.FieldSpec{Name: "estado"})
 	emptyPartes, emptyOut, emptyArgs, err := buildListSQL(def, spec, act, map[string]any{"estado": "   "})
 	if err != nil {
 		t.Fatalf("filtro vacío: error inesperado: %v", err)
@@ -340,4 +340,69 @@ func TestBuildListSQL_NoFilterUnchanged(t *testing.T) {
 	if len(condArgs) != 0 {
 		t.Fatalf("sin filtro ni condiciones no debe haber args: %v", condArgs)
 	}
+}
+
+// Cada operador de un filtro de acción SELECT: SQL y args exactos, partición por
+// comas de in/not_in, interruptor de is_null/is_not_null y rechazo de operador
+// desconocido sin producir SQL.
+func TestBuildActionFilterWhereOperators(t *testing.T) {
+	cases := []struct {
+		name       string
+		field      modules.FieldSpec
+		spec       modules.MultiTableSpec
+		input      map[string]any
+		wantClause string
+		wantArgs   []any
+	}{
+		{"eq", modules.FieldSpec{Name: "estado", Operator: modules.OpEq}, n1Spec("medios_pago"),
+			map[string]any{"estado": " ACTIVO "}, `lower(btrim("estado"::text)) = $2`, []any{"activo"}},
+		{"neq", modules.FieldSpec{Name: "estado", Operator: modules.OpNeq}, n1Spec("medios_pago"),
+			map[string]any{"estado": "X"}, `lower(btrim("estado"::text)) <> $2`, []any{"x"}},
+		{"in parte por comas", modules.FieldSpec{Name: "estado", Operator: modules.OpIn}, n1Spec("medios_pago"),
+			map[string]any{"estado": " A, b ,,C "}, `lower(btrim("estado"::text)) IN ($2, $3, $4)`, []any{"a", "b", "c"}},
+		{"not_in parte por comas", modules.FieldSpec{Name: "estado", Operator: modules.OpNotIn}, n1Spec("medios_pago"),
+			map[string]any{"estado": "a,b"}, `lower(btrim("estado"::text)) NOT IN ($2, $3)`, []any{"a", "b"}},
+		{"contains escapa comodines", modules.FieldSpec{Name: "nombre", Operator: modules.OpContains}, n1Spec("medios_pago"),
+			map[string]any{"nombre": `50%_a\b`}, `btrim("nombre"::text) ILIKE $2 ESCAPE '\'`, []any{`%50\%\_a\\b%`}},
+		{"starts_with", modules.FieldSpec{Name: "nombre", Operator: modules.OpStartsWith}, n1Spec("medios_pago"),
+			map[string]any{"nombre": " Vi "}, `btrim("nombre"::text) ILIKE $2 ESCAPE '\'`, []any{`Vi%`}},
+		{"ends_with", modules.FieldSpec{Name: "nombre", Operator: modules.OpEndsWith}, n1Spec("medios_pago"),
+			map[string]any{"nombre": "sa"}, `btrim("nombre"::text) ILIKE $2 ESCAPE '\'`, []any{`%sa`}},
+		{"is_null con campo lleno", modules.FieldSpec{Name: "estado", Operator: modules.OpIsNull}, n1Spec("medios_pago"),
+			map[string]any{"estado": "1"}, `"estado" IS NULL`, nil},
+		{"is_not_null con campo lleno", modules.FieldSpec{Name: "estado", Operator: modules.OpIsNotNull}, n1Spec("medios_pago"),
+			map[string]any{"estado": "1"}, `"estado" IS NOT NULL`, nil},
+		{"is_null con campo vacío se omite", modules.FieldSpec{Name: "estado", Operator: modules.OpIsNull}, n1Spec("medios_pago"),
+			map[string]any{"estado": " "}, ``, nil},
+		{"in sin valores tras partir se omite", modules.FieldSpec{Name: "estado", Operator: modules.OpIn}, n1Spec("medios_pago"),
+			map[string]any{"estado": " , ,"}, ``, nil},
+		{"multi-tabla cualifica", modules.FieldSpec{Name: "estado", SourceTable: "clientes", Operator: modules.OpNeq}, multiSpec("medios_pago", "clientes"),
+			map[string]any{"estado": "x"}, `lower(btrim("clientes"."estado"::text)) <> $2`, []any{"x"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// startParam=2: la numeración continúa tras un parámetro previo.
+			clause, args, err := buildActionFilterWhere(filterWhitelist, nil, tc.spec, selectAction(tc.field), tc.input, 2)
+			if err != nil {
+				t.Fatalf("error inesperado: %v", err)
+			}
+			if clause != tc.wantClause {
+				t.Fatalf("clause\n  got:  %s\n  want: %s", clause, tc.wantClause)
+			}
+			if len(args) != len(tc.wantArgs) || (len(args) > 0 && !reflect.DeepEqual(args, tc.wantArgs)) {
+				t.Fatalf("args\n  got:  %v\n  want: %v", args, tc.wantArgs)
+			}
+		})
+	}
+
+	t.Run("operador desconocido ⇒ ErrValidation sin SQL", func(t *testing.T) {
+		clause, args, err := buildActionFilterWhere(filterWhitelist, nil, n1Spec("medios_pago"),
+			selectAction(modules.FieldSpec{Name: "estado", Operator: "drop table"}), map[string]any{"estado": "x"}, 1)
+		if !errors.Is(err, ErrValidation) {
+			t.Fatalf("esperaba ErrValidation, got %v", err)
+		}
+		if clause != "" || args != nil {
+			t.Fatalf("en error no debe producirse SQL: %q %v", clause, args)
+		}
+	})
 }
