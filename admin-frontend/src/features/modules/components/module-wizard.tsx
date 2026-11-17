@@ -41,6 +41,7 @@ import {
 import { useConnectionTemplates } from "@/features/connections/hooks";
 import {
   actionsSectionError,
+  conditionsError,
   dynamicSourceError,
   emptyWizardState,
   fromCopyableDefinition,
@@ -223,11 +224,17 @@ export function ModuleWizard({ initial, editSlug, title }: ModuleWizardProps) {
             }
           }
           if (vs.kind === "dynamic") {
-            const err = dynamicSourceError(vs.dynamicSource, colLabel);
+            const err =
+              dynamicSourceError(vs.dynamicSource, colLabel) ??
+              conditionsError(vs.dynamicFilters, colLabel);
             if (err) {
               return { ok: false, error: err };
             }
           }
+        }
+        const condErr = conditionsError(state.conditions, "condiciones de listado");
+        if (condErr) {
+          return { ok: false, error: condErr };
         }
         return { ok: true, error: null };
       }

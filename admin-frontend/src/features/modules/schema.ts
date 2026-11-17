@@ -15,6 +15,7 @@ import type {
   AttributeMap,
   AuxTable,
   ColumnValueSource,
+  ComparisonOperator,
   DynamicSource,
   FieldSpec,
   FieldType,
@@ -32,6 +33,12 @@ import type {
   SourceType,
   UniquenessCheck,
 } from "@/features/modules/types";
+import {
+  isNullOperator,
+  splitValues,
+  toOperator,
+  validateOperatorValues,
+} from "@/features/modules/operators";
 
 /** slug kebab-case: minúsculas y dígitos separados por guiones simples. */
 export const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -171,11 +178,11 @@ export interface FieldFormState {
    */
   captureOnly: boolean;
   /**
-   * SOLO acciones SELECT (filtro de listado): tipo de coincidencia del predicado.
-   * "exact" (default) ⇒ igualdad; "partial" ⇒ LIKE contiene. El backend es la
-   * autoridad de la semántica SQL; se ignora en INSERT/UPDATE/DELETE.
+   * SOLO acciones SELECT (filtro de listado): operador de comparación del
+   * predicado. Ausente ⇒ "eq". El backend es la autoridad de la semántica SQL;
+   * se ignora en INSERT/UPDATE/DELETE.
    */
-  matchType?: "exact" | "partial";
+  operator?: ComparisonOperator;
   /**
    * EFÍMERO (solo estado del asistente): identidad estable del campo para la key
    * de React de su fila (ver `fieldRowKey`). Mismas garantías que
@@ -609,8 +616,13 @@ export function relationshipError(
     if (c.table !== rel.childTable && c.table !== rel.parentTable) {
       return "La condición constante del ON debe referenciar la tabla hija o padre";
     }
-    if (c.column.trim() === "" || c.value.trim() === "") {
-      return "La condición constante del ON necesita columna y valor";
+    if (c.column.trim() === "") {
+      return "La condición constante del ON necesita una columna";
+    }
+    const op = c.operator ?? "eq";
+    const err = validateOperatorValues(op, splitValues(op, c.value));
+    if (err) {
+      return `La condición constante del ON sobre «${c.column}»: ${err}`;
     }
   }
   return null;
@@ -752,8 +764,30 @@ export function deleteOrder(
 export interface ConditionFormState {
   field: string;
   valuesText: string;
+  /** Operador de comparación. Ausente ⇒ default del sitio ("in"). */
+  operator?: ComparisonOperator;
   /** MULTI-TABLA: tabla de la columna cuando es homónima. Vacío ⇒ principal. */
   sourceTable?: string;
+}
+
+/**
+ * Valida las condiciones de un sitio (listado, filtros de catálogo, campo
+ * dinámico, estrategia). Solo revisa las condiciones con columna y operador
+ * explícito: el legado sin operador no se rechaza (el backend lo tolera).
+ * Devuelve el mensaje en español anclado a la columna, o null.
+ */
+export function conditionsError(
+  conds: ConditionFormState[],
+  label: string,
+): string | null {
+  for (const c of conds) {
+    if (c.field.trim() === "" || c.operator === undefined) continue;
+    const err = validateOperatorValues(c.operator, splitValues(c.operator, c.valuesText));
+    if (err) {
+      return `La condición sobre «${c.field}» (${label}): ${err}`;
+    }
+  }
+  return null;
 }
 
 /** Estado completo del asistente. */
@@ -865,7 +899,7 @@ export function deriveActionShape(
 
 /**
  * `sqlOp` EFECTIVO de una acción para decidir render/emisión del bloque
- * matchType. En `custom` manda el usuario (normalizado a mayúsculas); en el
+ * operator. En `custom` manda el usuario (normalizado a mayúsculas); en el
  * resto se usa el derivado del tipo, ignorando el `a.sqlOp` crudo. NO muta el
  * estado. Función pura.
  */
@@ -894,10 +928,62 @@ export function defaultPlacementForKind(kind: ActionKind): Placement {
 }
 
 /**
+ * Convierte una constante del ON del formulario (un único `value` de texto) en
+ * `JoinConstant` del BFF: in/not_in ⇒ `values` con `value: ""`; eq/neq/LIKE ⇒
+ * `value` recortado; nulidad ⇒ `value: ""`. `operator` se omite si es "eq".
+ */
+function toJoinConstant(c: JoinConstant): JoinConstant {
+  const op = c.operator ?? "eq";
+  const operator = op !== "eq" ? op : undefined;
+  if (op === "in" || op === "not_in") {
+    return { table: c.table, column: c.column, value: "", operator, values: splitValues(op, c.value) };
+  }
+  if (isNullOperator(op)) {
+    return { table: c.table, column: c.column, value: "", operator };
+  }
+  return { table: c.table, column: c.column, value: c.value.trim(), operator };
+}
+
+/**
+ * Convierte una condición de formulario en `ListCondition` (sin `sourceTable`).
+ * Parte el texto según el operador (`splitValues`) y descarta la condición sin
+ * columna o sin valores (salvo los operadores de nulidad, que no llevan valores).
+ * `operator` se omite cuando es el default del sitio ("in") para que una
+ * definición sin tocar se reserialice idéntica.
+ */
+function conditionToList(c: ConditionFormState): ListCondition | null {
+  const field = c.field.trim();
+  const values = splitValues(c.operator ?? "in", c.valuesText);
+  if (field === "" || (values.length === 0 && !isNullOperator(c.operator))) {
+    return null;
+  }
+  return {
+    field,
+    values,
+    operator: c.operator !== undefined && c.operator !== "in" ? c.operator : undefined,
+  };
+}
+
+/** Inverso de `conditionToList` para la hidratación (operador desconocido ⇒ default). */
+function conditionFromList(cond: {
+  field?: unknown;
+  values?: unknown;
+  operator?: unknown;
+}): ConditionFormState {
+  return {
+    field: String(cond.field ?? ""),
+    valuesText: (Array.isArray(cond.values) ? (cond.values as unknown[]) : [])
+      .map((v) => String(v))
+      .join(", "),
+    operator: toOperator(cond.operator),
+  };
+}
+
+/**
  * Construye la `DynamicSource` del BFF a partir del estado de un campo
  * source==="dynamic". Los filtros se derivan de `dynamicFilters`
- * (`ConditionFormState[]`) EXACTAMENTE igual que `listConditions` (split por
- * comas, trim, descarta campos/valores vacíos). El orden solo se emite si hay
+ * (`ConditionFormState[]`) EXACTAMENTE igual que `listConditions` (ver
+ * `conditionToList`). El orden solo se emite si hay
  * columna; el límite solo si es > 0 (el backend acota el techo a 500).
  */
 function toDynamicSourceCore(input: {
@@ -906,14 +992,8 @@ function toDynamicSourceCore(input: {
 }): DynamicSource {
   const ds = input.dynamicSource;
   const filters: ListCondition[] = input.dynamicFilters
-    .map((c) => ({
-      field: c.field.trim(),
-      values: c.valuesText
-        .split(",")
-        .map((v) => v.trim())
-        .filter((v) => v !== ""),
-    }))
-    .filter((c) => c.field !== "" && c.values.length > 0);
+    .map((c) => conditionToList(c))
+    .filter((c): c is ListCondition => c !== null);
   const order: OrderSpec | undefined =
     ds.order && ds.order.column.trim() !== ""
       ? { column: ds.order.column.trim(), direction: ds.order.direction }
@@ -1080,12 +1160,12 @@ export function toDefinitionInput(state: WizardState): ModuleDefinitionInput {
         // sourceTable solo se emite si la columna es homónima (no es la principal).
         sourceTable:
           f.sourceTable && f.sourceTable !== principal ? f.sourceTable : undefined,
-        // matchType solo tiene sentido en acciones SELECT (filtro de listado) y
-        // con semántica omitempty: se emite SOLO cuando es "partial" ("exact" es
-        // el default del backend). Se ignora en escrituras.
-        matchType:
-          effectiveSqlOp(a) === "SELECT" && f.matchType === "partial"
-            ? "partial"
+        // operator solo tiene sentido en acciones SELECT (filtro de listado) y
+        // con semántica omitempty: se emite SOLO cuando no es "eq" (el default
+        // del backend). Se ignora en escrituras. matchType nunca se emite.
+        operator:
+          effectiveSqlOp(a) === "SELECT" && f.operator && f.operator !== "eq"
+            ? f.operator
             : undefined,
         // label: etiqueta legible del formulario de ejecución; omitempty (solo si
         // tiene contenido tras trim).
@@ -1123,7 +1203,7 @@ export function toDefinitionInput(state: WizardState): ModuleDefinitionInput {
       // una relación sin ellas produce el JSONB idéntico al de hoy.
       onConstants:
         r.onConstants.length > 0
-          ? r.onConstants.map((c) => ({ table: c.table, column: c.column, value: c.value }))
+          ? r.onConstants.map((c) => toJoinConstant(c))
           : undefined,
       joinType: r.joinType,
     }));
@@ -1152,17 +1232,17 @@ export function toDefinitionInput(state: WizardState): ModuleDefinitionInput {
 
   // Condiciones de listado: columna + valores (texto por comas → lista). Se
   // descartan las que no tengan campo o no tengan al menos un valor.
-  const listConditions: ListCondition[] = state.conditions
-    .map((c) => ({
-      field: c.field.trim(),
-      values: c.valuesText
-        .split(",")
-        .map((v) => v.trim())
-        .filter((v) => v !== ""),
-      sourceTable:
-        c.sourceTable && c.sourceTable !== principal ? c.sourceTable : undefined,
-    }))
-    .filter((c) => c.field !== "" && c.values.length > 0);
+  const listConditions: ListCondition[] = state.conditions.flatMap((c) => {
+    const cond = conditionToList(c);
+    if (cond === null) return [];
+    return [
+      {
+        ...cond,
+        sourceTable:
+          c.sourceTable && c.sourceTable !== principal ? c.sourceTable : undefined,
+      },
+    ];
+  });
 
   // Solo se envían las variables con valor (vacío = conservar).
   const variableValues: Record<string, string> = {};
@@ -1258,7 +1338,7 @@ function columnValueSourceFromDefinition(
       labelColumn?: unknown;
       order?: OrderSpec;
       limit?: unknown;
-      filters?: Array<{ field?: unknown; values?: unknown }>;
+      filters?: Array<{ field?: unknown; values?: unknown; operator?: unknown }>;
     };
   };
   if (vs.kind === "static") {
@@ -1280,12 +1360,7 @@ function columnValueSourceFromDefinition(
         order: ds.order ?? { column: "", direction: "asc" },
         limit: typeof ds.limit === "number" ? ds.limit : undefined,
       },
-      dynamicFilters: (ds.filters ?? []).map((cond) => ({
-        field: String(cond.field ?? ""),
-        valuesText: (Array.isArray(cond.values) ? (cond.values as unknown[]) : [])
-          .map((v) => String(v))
-          .join(", "),
-      })),
+      dynamicFilters: (ds.filters ?? []).map((cond) => conditionFromList(cond)),
     };
   }
   return empty;
@@ -1314,7 +1389,7 @@ function strategyFromDefinition(raw: unknown): StrategyFormState {
       labelColumn?: unknown;
       order?: OrderSpec;
       limit?: unknown;
-      filters?: Array<{ field?: unknown; values?: unknown }>;
+      filters?: Array<{ field?: unknown; values?: unknown; operator?: unknown }>;
     };
     storeColumn?: unknown;
     captureKey?: unknown;
@@ -1341,12 +1416,7 @@ function strategyFromDefinition(raw: unknown): StrategyFormState {
         order: cat.order ?? { column: "", direction: "asc" },
         limit: typeof cat.limit === "number" ? cat.limit : undefined,
       },
-      catalogFilters: (cat.filters ?? []).map((cond) => ({
-        field: String(cond.field ?? ""),
-        valuesText: (Array.isArray(cond.values) ? (cond.values as unknown[]) : [])
-          .map((v) => String(v))
-          .join(", "),
-      })),
+      catalogFilters: (cat.filters ?? []).map((cond) => conditionFromList(cond)),
       storeColumn: typeof s.storeColumn === "string" ? s.storeColumn : "",
       captureKey: typeof s.captureKey === "string" ? s.captureKey : "",
     };
@@ -1438,7 +1508,12 @@ export function fromDefinition(def: ModuleDefinitionInput): WizardState {
       ? (r.onConstants as Array<Record<string, unknown>>).map((c) => ({
           table: String(c.table ?? ""),
           column: String(c.column ?? ""),
-          value: String(c.value ?? ""),
+          // in/not_in ⇒ el texto del input es la lista unida por ", ".
+          value:
+            Array.isArray(c.values) && c.values.length > 0
+              ? (c.values as unknown[]).map((v) => String(v)).join(", ")
+              : String(c.value ?? ""),
+          operator: toOperator(c.operator),
         }))
       : [],
     joinType: r.joinType === "left" ? "left" : "inner",
@@ -1503,8 +1578,7 @@ export function fromDefinition(def: ModuleDefinitionInput): WizardState {
       };
     }),
     conditions: (def.listConditions ?? []).map((cond) => ({
-      field: cond.field,
-      valuesText: (cond.values ?? []).join(", "),
+      ...conditionFromList(cond),
       sourceTable: cond.sourceTable ?? "",
     })),
     actions: (def.actions ?? []).map((a, ai) => ({
@@ -1541,9 +1615,9 @@ export function fromDefinition(def: ModuleDefinitionInput): WizardState {
         // (que sí trae principal) y la marcaría "(columna inexistente)" al
         // reeditar. Rellenarlo con principal cierra el round-trip.
         sourceTable: f.sourceTable && f.sourceTable !== "" ? f.sourceTable : principal,
-        // matchType de acción SELECT: "partial" se conserva, cualquier otro
-        // (incluido ausente) se normaliza a "exact" (default del backend).
-        matchType: f.matchType === "partial" ? "partial" : "exact",
+        // Operador de acción SELECT: el explícito (si es conocido); si no, el
+        // matchType legado "partial" se lee como "contains"; ausente ⇒ "eq".
+        operator: toOperator(f.operator) ?? (f.matchType === "partial" ? "contains" : "eq"),
         // Fuente dinámica: se reconstruye la definición de la tabla de catálogo
         // y sus filtros al shape de formulario (valuesText por comas), inverso
         // exacto de toDynamicSource (igual que listConditions).
@@ -1554,10 +1628,7 @@ export function fromDefinition(def: ModuleDefinitionInput): WizardState {
           order: f.dynamicSource?.order ?? { column: "", direction: "asc" },
           limit: f.dynamicSource?.limit,
         },
-        dynamicFilters: (f.dynamicSource?.filters ?? []).map((cond) => ({
-          field: cond.field,
-          valuesText: (cond.values ?? []).join(", "),
-        })),
+        dynamicFilters: (f.dynamicSource?.filters ?? []).map((cond) => conditionFromList(cond)),
         hidden: Boolean(f.hidden),
         // label/captureOnly tolerantes: ausentes ⇒ "" / false (retrocompat).
         label: f.label ?? "",
@@ -1656,7 +1727,10 @@ export function selectOptionsError(
  */
 export function dynamicFieldError(field: FieldFormState): string | null {
   const label = field.name || "(sin nombre)";
-  return dynamicSourceError(field.dynamicSource, label);
+  return (
+    dynamicSourceError(field.dynamicSource, label) ??
+    conditionsError(field.dynamicFilters, label)
+  );
 }
 
 /**
@@ -1711,6 +1785,10 @@ export function strategyError(
       const dsErr = dynamicSourceError(s.catalog, label);
       if (dsErr) {
         return dsErr;
+      }
+      const filtersErr = conditionsError(s.catalogFilters, label);
+      if (filtersErr) {
+        return filtersErr;
       }
       if (s.captureKey.trim() === "") {
         return `La captura "${label}" necesita una clave de captura`;

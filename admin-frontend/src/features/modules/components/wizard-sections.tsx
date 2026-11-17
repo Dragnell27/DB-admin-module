@@ -28,6 +28,8 @@ import { Pill } from "@/components/ui/pill";
 import { FeedbackBanner } from "@/components/feedback-banner";
 import type { ApiError } from "@/lib/api-client";
 import { useModuleDef, useVisibleModules } from "@/features/modules/hooks";
+import { OperatorSelect } from "@/features/modules/components/operator-select";
+import { isNullOperator } from "@/features/modules/operators";
 import type {
   ConnectionTemplate,
   TemplateField,
@@ -35,10 +37,12 @@ import type {
 import type {
   ActionKind,
   AttributeMap,
+  ComparisonOperator,
   DynamicSource,
   FieldType,
   FillStrategyKind,
   FkJump,
+  JoinConstant,
   OrderDirection,
   SelectOption,
 } from "@/features/modules/types";
@@ -873,7 +877,7 @@ function RelationshipsEditor({ state, patch }: SectionProps) {
     rels[ri] = { ...rels[ri], on: [...rels[ri].on, { child: "", parent: "" }] };
     patch({ relationships: rels });
   };
-  // Condiciones constantes del ON (tabla.col = valor). Por defecto la tabla es la
+  // Condiciones constantes del ON (tabla.col <operador> valor). Por defecto la tabla es la
   // padre (la recién incorporada por el JOIN, caso típico list_numero = 10001).
   const addConstant = (ri: number) => {
     const rels = state.relationships.slice();
@@ -884,7 +888,11 @@ function RelationshipsEditor({ state, patch }: SectionProps) {
     };
     patch({ relationships: rels });
   };
-  const updateConstant = (ri: number, ci: number, p: Partial<{ table: string; column: string; value: string }>) => {
+  const updateConstant = (
+    ri: number,
+    ci: number,
+    p: Partial<Pick<JoinConstant, "table" | "column" | "value" | "operator">>,
+  ) => {
     const rels = state.relationships.slice();
     const onConstants = rels[ri].onConstants.slice();
     onConstants[ci] = { ...onConstants[ci], ...p };
@@ -959,7 +967,10 @@ function RelationshipRow({
   readonly onUpdatePair: (pi: number, p: Partial<{ child: string; parent: string }>) => void;
   readonly onAddPair: () => void;
   readonly onAddConstant: () => void;
-  readonly onUpdateConstant: (ci: number, p: Partial<{ table: string; column: string; value: string }>) => void;
+  readonly onUpdateConstant: (
+    ci: number,
+    p: Partial<Pick<JoinConstant, "table" | "column" | "value" | "operator">>,
+  ) => void;
   readonly onRemoveConstant: (ci: number) => void;
 }) {
   const i = index;
@@ -1026,7 +1037,7 @@ function RelationshipRow({
         </Button>
       </div>
       <div className="space-y-2">
-        <Label className="text-xs">Condiciones constantes (ON): columna = valor</Label>
+        <Label className="text-xs">Condiciones constantes (ON): columna, operador y valor</Label>
         <p className="text-xs text-muted-foreground">
           Se evalúa dentro del JOIN (ON), no en el filtro. Útil para fijar un
           valor como <code>list_numero = 10001</code> sin descartar filas sin coincidencia.
@@ -1044,8 +1055,22 @@ function RelationshipRow({
               ))}
             </select>
             <Input value={c.column} onChange={(e) => onUpdateConstant(ci, { column: e.target.value })} placeholder="list_numero" />
-            <span className="text-center text-sm text-muted-foreground">=</span>
-            <Input value={c.value} onChange={(e) => onUpdateConstant(ci, { value: e.target.value })} placeholder="10001" />
+            <OperatorSelect
+              className={inputClass}
+              value={c.operator}
+              defaultOperator="eq"
+              onChange={(operator) => onUpdateConstant(ci, { operator })}
+            />
+            {isNullOperator(c.operator) ? (
+              <div />
+            ) : (
+              <Input
+                value={c.value}
+                onChange={(e) => onUpdateConstant(ci, { value: e.target.value })}
+                placeholder={c.operator === "in" || c.operator === "not_in" ? "10001, 10002" : "10001"}
+                aria-label={conditionValuesLabel(c.operator ?? "eq")}
+              />
+            )}
             <Button type="button" variant="destructive" size="sm" onClick={() => onRemoveConstant(ci)}>
               Quitar
             </Button>
@@ -1494,9 +1519,18 @@ function SwitchField({
   );
 }
 
+/** Ayuda bajo el valor de los operadores que excluyen las filas vacías (neq/not_in). */
+const EXCLUDING_OPERATOR_HELP =
+  "Las filas sin valor (vacío) quedan fuera; usa «es vacío» para incluirlas en otra condición.";
+
+/** Etiqueta del input de valores según el operador (lista por comas o valor único). */
+function conditionValuesLabel(op: ComparisonOperator): string {
+  return op === "in" || op === "not_in" ? "Valores (separados por comas)" : "Valor";
+}
+
 /**
  * Cuerpo visual REUTILIZABLE de un editor de condiciones: filas columna +
- * valores (`valuesText`, separados por comas). Opera sobre un
+ * operador + valores (`valuesText`). Opera sobre un
  * `ConditionFormState[]` y su setter.
  */
 function ConditionRowsEditor({
@@ -1536,7 +1570,7 @@ function ConditionRowsEditor({
         </Button>
       </div>
       {conditions.map((cond, i) => (
-        <div key={i} className="grid items-end gap-2 sm:grid-cols-[1fr_2fr_auto]">
+        <div key={i} className="grid items-end gap-2 sm:grid-cols-[1fr_auto_2fr_auto]">
           <div className="space-y-1">
             <Label>Columna</Label>
             {definedColumns ? (
@@ -1566,13 +1600,29 @@ function ConditionRowsEditor({
             )}
           </div>
           <div className="space-y-1">
-            <Label>Valores permitidos (separados por comas)</Label>
-            <Input
-              value={cond.valuesText}
-              onChange={(e) => updateCondition(i, { valuesText: e.target.value })}
-              placeholder="active, pending"
+            <Label>Operador</Label>
+            <OperatorSelect
+              className={inputClass}
+              value={cond.operator}
+              defaultOperator="in"
+              onChange={(operator) => updateCondition(i, { operator })}
             />
           </div>
+          {isNullOperator(cond.operator) ? (
+            <div />
+          ) : (
+            <div className="space-y-1">
+              <Label>{conditionValuesLabel(cond.operator ?? "in")}</Label>
+              <Input
+                value={cond.valuesText}
+                onChange={(e) => updateCondition(i, { valuesText: e.target.value })}
+                placeholder="active, pending"
+              />
+              {cond.operator === "neq" || cond.operator === "not_in" ? (
+                <p className="text-xs text-muted-foreground">{EXCLUDING_OPERATOR_HELP}</p>
+              ) : null}
+            </div>
+          )}
           <Button type="button" variant="ghost" size="sm" onClick={() => removeCondition(i)} aria-label="Quitar condición">
             <Trash2 aria-hidden="true" />
           </Button>
@@ -1594,7 +1644,7 @@ function ConditionsEditor({ state, patch }: SectionProps) {
       <div>
         <p className="text-sm font-medium text-foreground">Condiciones de listado (opcional)</p>
         <p className="text-xs text-muted-foreground">
-          Muestra solo las filas cuya columna tenga uno de los valores indicados. Varias condiciones se combinan (todas deben cumplirse).
+          Muestra solo las filas cuya columna cumple el operador y los valores indicados. Varias condiciones se combinan (todas deben cumplirse).
         </p>
       </div>
       <ConditionRowsEditor
@@ -2584,24 +2634,26 @@ function ActionFieldRow({
                         ) : null}
                       </select>
                     </div>
-                    {/* Coincidencia del filtro: SOLO acciones SELECT (filtro de
-                        listado). "Exacta" ⇒ igualdad; "Parcial" ⇒ contiene (LIKE).
-                        Se ignora en INSERT/UPDATE/DELETE. Default exacta. */}
+                    {/* Operador del filtro: SOLO acciones SELECT (filtro de
+                        listado). Se ignora en INSERT/UPDATE/DELETE. Default
+                        «igual a». */}
                     {effectiveSqlOp(a) === "SELECT" ? (
                       <div className="space-y-1">
-                        <Label>Coincidencia</Label>
-                        <select
+                        <Label>Operador</Label>
+                        <OperatorSelect
                           className={inputClass}
-                          value={f.matchType ?? "exact"}
-                          onChange={(e) =>
-                            onUpdateField({
-                              matchType: e.target.value === "partial" ? "partial" : "exact",
-                            })
-                          }
-                        >
-                          <option value="exact">Exacta</option>
-                          <option value="partial">Parcial (contiene)</option>
-                        </select>
+                          value={f.operator}
+                          defaultOperator="eq"
+                          onChange={(operator) => onUpdateField({ operator })}
+                        />
+                        {isNullOperator(f.operator) ? (
+                          <p className="text-xs text-muted-foreground">
+                            Se aplica solo si el usuario llena el campo.
+                          </p>
+                        ) : null}
+                        {f.operator === "neq" || f.operator === "not_in" ? (
+                          <p className="text-xs text-muted-foreground">{EXCLUDING_OPERATOR_HELP}</p>
+                        ) : null}
                       </div>
                     ) : null}
                     {/* Valor literal fijo que se envía siempre (p. ej. un header

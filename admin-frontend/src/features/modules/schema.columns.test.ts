@@ -269,7 +269,7 @@ describe("regresión: campo de la tabla PRINCIPAL no queda huérfano al reeditar
               label: "",
               captureOnly: false,
               strategy: emptyStrategyFormState(),
-              matchType: "exact",
+              operator: "eq",
               // sourceTable apunta a la PRINCIPAL ⇒ toDefinitionInput lo omitirá.
               sourceTable: "comercio",
             },

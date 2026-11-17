@@ -198,7 +198,7 @@ describe("toDefinitionInput (normalización, borde 4)", () => {
     expect(def.actions[0].isWrite).toBe(false);
   });
 
-  it("custom+SELECT con matchType=partial ⇒ respeta SELECT y emite partial", () => {
+  it("custom+SELECT con operator=contains ⇒ respeta SELECT y emite contains", () => {
     const def = toDefinitionInput(
       stateWith([
         action({
@@ -225,17 +225,18 @@ describe("toDefinitionInput (normalización, borde 4)", () => {
               label: "",
               captureOnly: false,
               strategy: emptyStrategyFormState(),
-              matchType: "partial",
+              operator: "contains",
             },
           ],
         }),
       ]),
     );
     expect(def.actions[0].sqlOp).toBe("SELECT");
-    expect(def.actions[0].inputFields[0].matchType).toBe("partial");
+    expect(def.actions[0].inputFields[0].operator).toBe("contains");
+    expect(def.actions[0].inputFields[0].matchType).toBeUndefined();
   });
 
-  it("list con sqlOp crudo incoherente y campo partial ⇒ emite partial vía effectiveSqlOp", () => {
+  it("list con sqlOp crudo incoherente y campo contains ⇒ emite contains vía effectiveSqlOp", () => {
     const def = toDefinitionInput(
       stateWith([
         action({
@@ -262,14 +263,14 @@ describe("toDefinitionInput (normalización, borde 4)", () => {
               label: "",
               captureOnly: false,
               strategy: emptyStrategyFormState(),
-              matchType: "partial",
+              operator: "contains",
             },
           ],
         }),
       ]),
     );
     expect(def.actions[0].sqlOp).toBe("SELECT");
-    expect(def.actions[0].inputFields[0].matchType).toBe("partial");
+    expect(def.actions[0].inputFields[0].operator).toBe("contains");
   });
 });
 
@@ -295,7 +296,7 @@ describe("fromDefinition (retrocompat, borde 4)", () => {
     };
   }
 
-  it("custom+SELECT con campos sigue custom/SELECT y preserva matchType", () => {
+  it("custom+SELECT con campos sigue custom/SELECT y lee matchType legado como contains", () => {
     const st = fromDefinition(
       defWithAction({
         actionKey: "buscar",
@@ -319,7 +320,7 @@ describe("fromDefinition (retrocompat, borde 4)", () => {
     );
     expect(st.actions[0].kind).toBe("custom");
     expect(st.actions[0].sqlOp).toBe("SELECT");
-    expect(st.actions[0].inputFields[0].matchType).toBe("partial");
+    expect(st.actions[0].inputFields[0].operator).toBe("contains");
   });
 
   it("edit con sqlOp='' hidrata sin romper (sqlOp respetado tal cual)", () => {

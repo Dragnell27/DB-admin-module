@@ -254,7 +254,20 @@ describe("treeError / relationshipError", () => {
         },
         ["pagos", "clientes"],
       ),
-    ).toMatch(/columna y valor/);
+    ).toMatch(/necesita una columna/);
+    // Valor vacío con el operador por defecto (igual a).
+    expect(
+      relationshipError(
+        {
+          childTable: "pagos",
+          parentTable: "clientes",
+          on: [{ child: "cliente_id", parent: "id" }],
+          onConstants: [{ table: "clientes", column: "estado", value: "" }],
+          joinType: "inner",
+        },
+        ["pagos", "clientes"],
+      ),
+    ).toMatch(/«igual a» necesita un valor/);
     // Constante válida ⇒ sin error.
     expect(
       relationshipError(

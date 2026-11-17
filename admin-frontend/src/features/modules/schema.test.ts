@@ -177,35 +177,35 @@ describe("round-trip toDefinitionInput / fromDefinition de un campo select", () 
   });
 });
 
-describe("matchType de acción SELECT (omitempty) y retiro del buscador por columna", () => {
-  it("emite matchType SOLO cuando es 'partial' en una acción SELECT", () => {
+describe("operator de acción SELECT (omitempty) y retiro del buscador por columna", () => {
+  it("emite operator SOLO cuando no es 'eq' en una acción SELECT", () => {
     // stateWithFields crea una acción con sqlOp "SELECT".
     const state = stateWithFields([
-      baseField({ name: "nombre", source: "input", matchType: "partial" }),
-      baseField({ name: "estado", source: "input", matchType: "exact" }),
+      baseField({ name: "nombre", source: "input", operator: "contains" }),
+      baseField({ name: "estado", source: "input", operator: "eq" }),
     ]);
 
     const def = toDefinitionInput(state);
-    const [partial, exact] = def.actions[0].inputFields;
-    expect(partial.matchType).toBe("partial");
-    // "exact" es el default del backend ⇒ no se emite (omitempty).
-    expect(exact.matchType).toBeUndefined();
+    const [contains, eq] = def.actions[0].inputFields;
+    expect(contains.operator).toBe("contains");
+    // "eq" es el default del backend ⇒ no se emite (omitempty).
+    expect(eq.operator).toBeUndefined();
+    expect(contains.matchType).toBeUndefined();
   });
 
-  it("round-trip: fromDefinition hidrata 'partial' y normaliza el resto a 'exact'", () => {
+  it("round-trip: fromDefinition hidrata el operador y deja 'eq' al resto", () => {
     const state = stateWithFields([
-      baseField({ name: "nombre", source: "input", matchType: "partial" }),
-      baseField({ name: "estado", source: "input", matchType: "exact" }),
+      baseField({ name: "nombre", source: "input", operator: "contains" }),
+      baseField({ name: "estado", source: "input", operator: "eq" }),
     ]);
 
     const back = fromDefinition(toDefinitionInput(state));
     const [nombre, estado] = back.actions[0].inputFields;
-    expect(nombre.matchType).toBe("partial");
-    // El que no se emitió se hidrata al default "exact".
-    expect(estado.matchType).toBe("exact");
+    expect(nombre.operator).toBe("contains");
+    expect(estado.operator).toBe("eq");
   });
 
-  it("una acción NO-SELECT nunca emite matchType", () => {
+  it("una acción NO-SELECT nunca emite operator", () => {
     const state: WizardState = {
       ...emptyWizardState(),
       slug: "m",
@@ -225,12 +225,13 @@ describe("matchType de acción SELECT (omitempty) y retiro del buscador por colu
           permAction: "editar",
           isWrite: true,
           sqlOp: "UPDATE",
-          inputFields: [baseField({ name: "nombre", source: "input", matchType: "partial" })],
+          inputFields: [baseField({ name: "nombre", source: "input", operator: "contains" })],
           uniqueness: emptyUniquenessFormState(),
         },
       ],
     };
     const def = toDefinitionInput(state);
+    expect(def.actions[0].inputFields[0].operator).toBeUndefined();
     expect(def.actions[0].inputFields[0].matchType).toBeUndefined();
   });
 

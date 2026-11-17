@@ -188,10 +188,15 @@ export interface FieldSpec {
    */
   strategy?: FillStrategy;
   /**
-   * SOLO acciones SELECT (filtro de listado): tipo de coincidencia del predicado
-   * que el backend arma con el valor de este campo. "exact" ⇒ igualdad; "partial"
-   * ⇒ LIKE contiene. Ausente ⇒ "exact". El backend es la autoridad de la
-   * semántica SQL; para INSERT/UPDATE/DELETE se ignora.
+   * SOLO acciones SELECT (filtro de listado): operador de comparación del
+   * predicado que el backend arma con el valor de este campo. Ausente ⇒ "eq".
+   * El backend es la autoridad de la semántica SQL; para INSERT/UPDATE/DELETE se
+   * ignora.
+   */
+  operator?: ComparisonOperator;
+  /**
+   * LEGADO (solo lectura de definiciones ya persistidas): "partial" equivale a
+   * `operator: "contains"`. La UI nunca lo emite; usar `operator`.
    */
   matchType?: "exact" | "partial";
   /**
@@ -277,15 +282,30 @@ export interface JoinPair {
   parent: string;
 }
 
+/** Operador de comparación (enum cerrado; espejo de modules.Operator del backend). */
+export type ComparisonOperator =
+  | "eq"
+  | "neq"
+  | "in"
+  | "not_in"
+  | "contains"
+  | "starts_with"
+  | "ends_with"
+  | "is_null"
+  | "is_not_null";
+
 /**
- * Condición extra del ON: tabla.columna = valor constante. El valor viaja SIEMPRE
- * ligado ($N) en el backend; NUNCA se interpola. `table` es la hija o la padre de
- * la relación.
+ * Condición extra del ON: tabla.columna <operador> valor constante. El valor
+ * viaja SIEMPRE ligado ($N) en el backend; NUNCA se interpola. `table` es la
+ * hija o la padre de la relación. `operator` ausente ⇒ "eq". Con in/not_in la
+ * lista va en `values` y `value` es "".
  */
 export interface JoinConstant {
   table: string;
   column: string;
   value: string;
+  operator?: ComparisonOperator;
+  values?: string[];
 }
 
 /** Tipo de JOIN soportado en v1. */
@@ -353,6 +373,8 @@ export interface ModuleSecrets {
 export interface ListCondition {
   field: string;
   values: string[];
+  /** Operador de comparación. Ausente ⇒ "in" (comportamiento histórico). */
+  operator?: ComparisonOperator;
   /**
    * MULTI-TABLA: tabla de la columna `field` cuando es homónima entre tablas.
    * Ausente ⇒ principal / única columna con ese nombre.
